@@ -1,0 +1,41 @@
+# Work-Item Map for Feature 101 — REST API Ingestion
+
+feature:
+  id: 101
+  title: REST API Ingestion
+  parent_epic: Epic 1 — Ingestion Layer
+  priority: 1
+  effort: 12
+
+scheduling:
+  pi: PI-1
+  sprints: [S1, S2]
+
+capacity:
+  dana: { s1: 3, s2: 4, total: 7 }
+  eric: { s1: 2, s2: 3, total: 5 }
+  total: { s1: 5, s2: 7, total: 12 }
+
+stories:
+  E1: { trackerId: pending, file: stories/E1-pending-api-gateway-lambda.md }
+  E2: { trackerId: pending, file: stories/E2-pending-schema-validation-dlq.md }
+  E3: { trackerId: pending, file: stories/E3-pending-kinesis-persistence.md }
+  E4: { trackerId: pending, file: stories/E4-pending-terraform-ingestion.md }
+
+deviations_from_design:
+  - id: DEV-001
+    topic: Schema storage
+    design_says: "PRD mandates EventBridge Schema Registry (§Technology Constraints)"
+    reality: "JSON Schema files in S3 with in-memory caching for PI 1 (E2)"
+    reason: "Registry adds discoverability we don't need yet; S3 keeps E2 at 4 PD. Migration deferred to PI 2"
+    captured_in: .kiro/specs/101-rest-api-ingestion/design.md#open-questions--risks
+
+deferred_to_next_pi:
+  - Kinesis consumer-based ingestion (high-throughput path)
+  - Rate limiting per source
+  - Batch event submission endpoint
+  - EventBridge Schema Registry migration
+
+retired: []
+
+lastSync: 1970-01-01T00:00:00Z

@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Spec Consistency Check",
+      "description": "Keeps story files, tasks.md and work-item-map.yaml in agreement whenever a spec file changes.",
+      "trigger": "PostFileSave",
+      "matcher": "^\\.kiro/specs/.*\\.(md|yaml)$",
+      "action": {
+        "type": "agent",
+        "prompt": "A spec file under .kiro/specs/ changed. Check the feature folder it belongs to for internal consistency:\n\n1. Every story listed in work-item-map.yaml has a file on disk at the path given, and every story file on disk appears in the map.\n2. Every story ref in tasks.md resolves to a story file.\n3. Every ref in a story's dependsOn front-matter resolves to a real story.\n4. A story marked state: Done has all implementation tasks checked, and vice versa.\n5. Effort totals in work-item-map.yaml capacity match the sum of story effort values.\n\nReport only mismatches, each as one line naming the file and the fix. If everything agrees, say 'Specs consistent' and stop."
+      }
+    }
+  ]
+}

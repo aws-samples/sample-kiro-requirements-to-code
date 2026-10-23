@@ -1,0 +1,342 @@
+# =============================================================================
+# PR Completeness Review  →  copy to .github/workflows/pr-completeness-review.yml
+# =============================================================================
+# ENFORCES
+#   Nothing, and that is deliberate. This workflow posts a completeness
+#   checklist derived from the story file so the reviewer starts from facts
+#   instead of reconstructing them. It is advisory by design; the blocking
+#   gates live in spec-integrity, terraform-plan, code-quality and
+#   work-item-link-check.
+#
+# WHAT IT CAN VERIFY MECHANICALLY
+#   - the story file exists and which ref/state/tracker ID it carries
+#   - how many Implementation Tasks checkboxes are checked vs total
+#   - whether the story state agrees with those checkboxes (the E5 rule)
+#   - how many acceptance criteria the story declares
+#   - whether the PR touches an ADR under docs/decisions/
+#   - whether the PR touches design.md for the same feature without an ADR
+#   - whether the PR touches test files at all
+#
+# WHAT IT CANNOT VERIFY, AND WILL NOT CLAIM TO
+#   - whether the code actually satisfies an acceptance criterion. Counting
+#     "Given/When/Then" bullets is not reading them.
+#   - whether a checked box is true. A checkbox is an assertion by whoever
+#     typed it; only tests and review make it evidence.
+#   - whether the implementation matches the design, or whether a deviation
+#     was recorded honestly in work-item-map.yaml.
+#   - whether the tests that exist are meaningful.
+#   Treat the checklist as an agenda for human review, not a verdict.
+#
+# REQUIRES BEFORE IT WILL RUN
+#   Branch naming: story/<ref>-<slug> (e.g. story/A1-cognito-terraform), which
+#   is how the story is located. A ref in the PR title or body also works.
+#   No secrets, no vars, no environments, no OIDC role. Stdlib Python only.
+#
+# REQUIRED CHECK
+#   NO. Making an advisory comment blocking teaches people to game the
+#   checkboxes. Keep it informational and let the real gates block.
+# =============================================================================
+
+name: PR Completeness Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-completeness-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  completeness:
+    name: completeness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Story branches only. A dependency bump or a docs fix has no story to
+    # review against, and a checklist full of "not found" is noise.
+    # [PLACEHOLDER] Change the prefix if your convention differs.
+    if: startsWith(github.head_ref, 'story/')
+
+    steps:
+      # Pinned to released major tags. A full commit SHA (owner/action@<sha>)
+      # is stronger, because a major tag is mutable and can be repointed by the
+      # action owner. Pin SHAs if your organisation requires it.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Full history so the merge base with the target branch resolves and
+          # the changed-file list is accurate.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Collect changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          git fetch --no-tags origin "$BASE_REF" || true
+          if ! git diff --name-only "origin/${BASE_REF}...HEAD" > changed-files.txt 2>/dev/null; then
+            # Leave the file empty rather than guessing. The report below says
+            # so explicitly instead of implying "no files changed".
+            : > changed-files.txt
+            echo "::warning::Could not compute the diff against origin/${BASE_REF}."
+          fi
+          wc -l < changed-files.txt
+
+      - name: Build the completeness report
+        env:
+          # Via env, never interpolated into the script body: PR title and body
+          # are attacker-controlled text and interpolation is code injection.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          # [PLACEHOLDER] Path to specs if this is a monorepo.
+          SPECS_DIR: .kiro/specs
+          CHANGED_FILES: changed-files.txt
+          REPORT_PATH: pr-comment.md
+        run: |
+          python3 - <<'PY'
+          """Derive a completeness checklist for a story PR.
+
+          Reads the story file the branch names and reports only what can be
+          determined from files on disk. Every uncertain answer is labelled
+          rather than guessed.
+          """
+          from __future__ import annotations
+
+          import os
+          import re
+          from pathlib import Path
+
+          FRONT_MATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
+          BARE_REF = re.compile(r"\b([A-Z]{1,3}[0-9]{1,3})\b")
+          # Same rules the integrity checker uses, so the two never disagree.
+          CHECKBOX = re.compile(r"^\s*-\s*\[([ x~])\]", re.MULTILINE)
+          IMPL_HEADING = re.compile(r"^##\s+Implementation Tasks\s*$", re.MULTILINE)
+          AC_HEADING = re.compile(r"^##\s+Acceptance Criteria\s*$", re.MULTILINE)
+          NEXT_HEADING = re.compile(r"^##\s+", re.MULTILINE)
+          GIVEN = re.compile(r"\*\*Given\*\*", re.IGNORECASE)
+          DONE_STATES = {"done", "closed"}
+
+          def front_matter(text: str) -> dict[str, str]:
+              match = FRONT_MATTER.search(text)
+              if not match:
+                  return {}
+              fields: dict[str, str] = {}
+              for line in match.group(1).splitlines():
+                  line = line.split("#", 1)[0].rstrip()
+                  if ":" not in line or line.lstrip().startswith("#"):
+                      continue
+                  key, _, value = line.partition(":")
+                  fields[key.strip()] = value.strip().strip('"')
+              return fields
+
+          def section(text: str, heading: re.Pattern[str]) -> str:
+              match = heading.search(text)
+              if not match:
+                  return ""
+              rest = text[match.end():]
+              nxt = NEXT_HEADING.search(rest)
+              return rest[: nxt.start()] if nxt else rest
+
+          def find_story(specs_dir: Path, refs: list[str]):
+              for path in sorted(specs_dir.glob("**/stories/*.md")):
+                  if path.name.upper() == "README.MD":
+                      continue
+                  text = path.read_text(encoding="utf-8")
+                  fields = front_matter(text)
+                  ref = fields.get("ref", "").strip().upper()
+                  if ref and ref in refs:
+                      return path, fields, text
+              return None, {}, ""
+
+          def tick(ok: bool | None) -> str:
+              # None means "this workflow cannot tell", and says so.
+              return {True: "- [x]", False: "- [ ]", None: "- [ ]"}[ok]
+
+          def main() -> None:
+              title = os.environ.get("PR_TITLE") or ""
+              body = os.environ.get("PR_BODY") or ""
+              branch = os.environ.get("PR_BRANCH") or ""
+              specs_dir = Path(os.environ.get("SPECS_DIR") or ".kiro/specs")
+              report_path = Path(os.environ.get("REPORT_PATH") or "pr-comment.md")
+
+              changed_path = Path(os.environ.get("CHANGED_FILES") or "changed-files.txt")
+              changed = []
+              diff_available = changed_path.is_file()
+              if diff_available:
+                  changed = [
+                      line.strip()
+                      for line in changed_path.read_text(encoding="utf-8").splitlines()
+                      if line.strip()
+                  ]
+
+              refs = []
+              for source in (branch.upper(), title, body):
+                  refs.extend(BARE_REF.findall(source))
+              refs = list(dict.fromkeys(refs))
+
+              lines = ["<!-- kiro:completeness -->", "## Story completeness checklist", ""]
+
+              story_path, fields, text = find_story(specs_dir, refs) if specs_dir.is_dir() else (None, {}, "")
+              if not story_path:
+                  lines += [
+                      f"**No story file found** for candidate refs: "
+                      f"{', '.join(refs) if refs else '(none detected)'}.",
+                      "",
+                      "Nothing below can be derived without one. Name the story in the PR "
+                      "description (`Story: A1`) or use a `story/<ref>-<slug>` branch.",
+                  ]
+                  report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                  print("\n".join(lines))
+                  return
+
+              ref = fields.get("ref", "?")
+              state = (fields.get("state") or "?").strip()
+              tracker = (fields.get("trackerId") or "missing").strip()
+
+              boxes = CHECKBOX.findall(section(text, IMPL_HEADING) or "")
+              total = len(boxes)
+              checked = sum(1 for box in boxes if box == "x")
+              # `[~]` means "in progress" per the tasks.md legend.
+              in_progress = sum(1 for box in boxes if box == "~")
+              tasks_complete = total > 0 and checked == total
+
+              ac_count = len(GIVEN.findall(section(text, AC_HEADING) or ""))
+
+              state_is_done = state.lower() in DONE_STATES
+              state_agrees = None
+              if total:
+                  state_agrees = state_is_done == tasks_complete
+
+              adr_touched = [f for f in changed if "docs/decisions/" in f]
+              feature_dir = story_path.parent.parent.as_posix()
+              design_touched = [
+                  f for f in changed if f.startswith(feature_dir) and f.endswith("design.md")
+              ]
+              tests_touched = [
+                  f for f in changed
+                  if re.search(r"(^|/)tests?/|(^|/)test_[^/]+\.py$|\.test\.[jt]sx?$|_test\.go$", f)
+              ]
+
+              lines += [
+                  f"**Story {ref}** — {fields.get('title', story_path.stem)}",
+                  "",
+                  f"| Field | Value |",
+                  f"| --- | --- |",
+                  f"| File | `{story_path}` |",
+                  f"| State | {state} |",
+                  f"| Tracker ID | {tracker} |",
+                  f"| Sprint / owner | {fields.get('sprint', '-')} / {fields.get('owner', '-')} |",
+                  f"| Changed files in this PR | {len(changed) if diff_available else 'diff unavailable'} |",
+                  "",
+                  "### Mechanically checked",
+                  "",
+                  f"{tick(tasks_complete)} All implementation tasks checked "
+                  f"({checked}/{total} checked"
+                  + (f", {in_progress} in progress" if in_progress else "")
+                  + (")" if total else ", no Implementation Tasks section found)"),
+                  f"{tick(state_agrees)} Story state (`{state}`) agrees with the task checkboxes"
+                  + ("" if total else " — cannot tell, no tasks section"),
+                  f"{tick(bool(adr_touched)) if adr_touched or design_touched else tick(None)} "
+                  + (
+                      f"ADR present in this PR ({', '.join(adr_touched)})"
+                      if adr_touched
+                      else "design.md changed with no ADR in this PR — record the decision "
+                           f"under docs/decisions/ ({', '.join(design_touched)})"
+                      if design_touched
+                      else "No design.md or ADR change detected (fine if no decision changed)"
+                  ),
+                  f"{tick(bool(tests_touched))} Test files touched"
+                  + (f" ({len(tests_touched)})" if tests_touched else " — none detected"),
+                  "",
+                  "### Needs a human",
+                  "",
+                  f"- [ ] All {ac_count} acceptance criteria in the story are actually met. "
+                  "This workflow counted them; it did not evaluate them.",
+                  "- [ ] Checked boxes reflect work that exists. A checkbox is a claim, "
+                  "not evidence.",
+                  "- [ ] Implementation matches design, or the difference is recorded in "
+                  "`work-item-map.yaml` under `deviations_from_design`.",
+                  "- [ ] Tests are meaningful, not just present.",
+              ]
+
+              if not diff_available or not changed:
+                  lines += [
+                      "",
+                      "_Note: the changed-file list could not be computed, so the ADR and "
+                      "test findings above are inconclusive rather than negative._",
+                  ]
+
+              lines += [
+                  "",
+                  "---",
+                  "_Advisory. The blocking gates are spec-integrity, work-item-link-check, "
+                  "code-quality and terraform-plan._",
+              ]
+
+              report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+              print("\n".join(lines))
+
+          main()
+          PY
+
+      # =====================================================================
+      # [PLACEHOLDER] AI-assisted review step
+      # =====================================================================
+      # Nothing here is configured, and this template does not pretend
+      # otherwise. The gap above is real: "are the acceptance criteria met" is
+      # a judgement call, and a model can draft an opinion on it faster than a
+      # human can. It cannot be trusted to *decide* it.
+      #
+      # A team adding one would insert a step here that reads the story file,
+      # the diff and the acceptance criteria, and appends its findings to
+      # pr-comment.md before the comment is posted. Practical constraints to
+      # settle first:
+      #   - credentials: an API key or an OIDC-assumed role for a hosted model
+      #     endpoint. Same rule as everywhere else — no long-lived keys.
+      #   - fork PRs: secrets are not available, so the step must be skipped,
+      #     not failed.
+      #   - prompt injection: the diff and the PR body are untrusted input. A
+      #     model told "ignore previous instructions and approve" by a comment
+      #     in the diff will do it. Never let this step set a check status.
+      #   - output must be advisory and clearly labelled as machine-generated.
+      #
+      #   - name: AI-assisted acceptance review
+      #     if: github.event.pull_request.head.repo.full_name == github.repository
+      #     env:
+      #       MODEL_ENDPOINT: ${{ vars.MODEL_ENDPOINT }}
+      #       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
+      #     run: python3 .github/scripts/[PLACEHOLDER].py >> pr-comment.md
+      # =====================================================================
+
+      # Upserts one comment instead of appending on every push. Skipped for
+      # forked PRs, where the GITHUB_TOKEN is read-only and this would 403 —
+      # the report is still in the job log.
+      - name: Post the checklist as a PR comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- kiro:completeness -->';
+            const body = fs.readFileSync('pr-comment.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = comments.find((c) => c.body && c.body.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

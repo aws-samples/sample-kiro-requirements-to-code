@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Python Lint and Type Check",
+      "description": "Runs ruff and mypy after the agent edits Python source or tests.",
+      "trigger": "PostFileSave",
+      "matcher": "^(src|tests)/.*\\.py$",
+      "timeout": 120,
+      "action": {
+        "type": "command",
+        "command": "ruff check --fix src/ tests/ && ruff format src/ tests/ && mypy src/"
+      }
+    }
+  ]
+}

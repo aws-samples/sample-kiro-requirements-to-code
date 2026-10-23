@@ -1,0 +1,160 @@
+# Terraform Apply — adapted from templates/workflows/terraform-apply.template.yml
+# Plans on push to main, applies after environment approval gate (prod).
+# NOT a required check — this is a post-merge deployment.
+#
+# REQUIRES (GitHub repository secrets/vars — see templates/workflows/README.md):
+#   secrets.AWS_PLAN_ROLE_ARN           — read-only plan role
+#   secrets.AWS_APPLY_ROLE_ARN          — per environment (dev, prod)
+#   vars.AWS_REGION, TF_STATE_BUCKET, TERRAFORM_VERSION
+# GitHub Environments: create 'dev' (no reviewers) and 'prod' (required reviewers).
+
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        required: true
+        default: dev
+        options: [dev, prod]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-apply-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+env:
+  TF_WORKING_DIR: infra/terraform
+  TF_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+
+jobs:
+  plan:
+    name: plan (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      target: ${{ github.event.inputs.environment || 'dev' }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC, read-only)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-plan-${{ github.run_id }}
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_ENV: ${{ github.event.inputs.environment || 'dev' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_ENV}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform plan
+        env:
+          TF_ENV: ${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          set -euo pipefail
+          terraform plan -no-color -lock-timeout=5m -out=tfplan.binary \
+            -var-file="environments/${TF_ENV}.tfvars"
+          terraform show -no-color tfplan.binary > tfplan.txt
+
+      - name: Add plan to run summary
+        run: |
+          { echo '### terraform plan'; echo '```terraform'; tail -c 60000 tfplan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment || 'dev' }}-${{ github.run_id }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan.binary
+            ${{ env.TF_WORKING_DIR }}/tfplan.txt
+          retention-days: 5
+          if-no-files-found: error
+
+  apply:
+    name: apply (${{ needs.plan.outputs.target }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: ${{ needs.plan.outputs.target }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.plan.outputs.target }}-${{ github.run_id }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Configure AWS credentials (OIDC, write role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-apply-${{ github.run_id }}
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_ENV: ${{ needs.plan.outputs.target }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_ENV}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform apply
+        run: terraform apply -no-color -lock-timeout=5m -auto-approve tfplan.binary
+
+      - name: Add outcome to run summary
+        if: always()
+        run: echo "### terraform apply ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,6 @@
+# Runtime dependencies for the ingestion Lambda (Python 3.12).
+# Pinned exactly so deployment packages are reproducible.
+# The tracer extra pulls in aws-xray-sdk, required by Powertools Tracer.
+aws-lambda-powertools[tracer]==3.34.0
+pydantic==2.13.4
+uuid7==0.1.0

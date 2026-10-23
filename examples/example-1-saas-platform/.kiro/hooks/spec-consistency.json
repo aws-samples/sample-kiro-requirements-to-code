@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Spec Consistency Check",
+      "description": "Runs the spec integrity checker whenever a spec file changes, so story files, tasks.md and work-item-map.yaml stay in agreement.",
+      "trigger": "PostFileSave",
+      "matcher": "^\\.kiro/specs/.*\\.(md|yaml)$",
+      "timeout": 60,
+      "action": {
+        "type": "command",
+        "command": "python3 .kiro/hooks/scripts/check-spec-integrity.py"
+      }
+    }
+  ]
+}

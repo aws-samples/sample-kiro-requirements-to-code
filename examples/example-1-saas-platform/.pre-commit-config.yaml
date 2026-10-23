@@ -1,0 +1,38 @@
+# Quality gates for TaskFlow (story I1). Blocking, per infra-guidelines.md.
+#
+#   pip install pre-commit && pre-commit install
+#   pre-commit run --all-files
+#
+# Requires terraform >= 1.14 and tflint on PATH. Checkov is added in Sprint 2,
+# once there are real resources to scan.
+#
+# Paths below assume this file sits at the repository root. When the example is
+# vendored into a larger repo, adjust the __GIT_WORKING_DIR__ path in
+# terraform_tflint accordingly.
+---
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.109.0
+    hooks:
+      # Canonical formatting. Rewrites files, so it runs first.
+      - id: terraform_fmt
+
+      # Runs `terraform init -backend=false` then `terraform validate`, so it
+      # needs no AWS credentials and no access to the state bucket.
+      - id: terraform_validate
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+
+      # Shared ruleset for the root composition and every module under it.
+      - id: terraform_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/infra/terraform/.tflint.hcl

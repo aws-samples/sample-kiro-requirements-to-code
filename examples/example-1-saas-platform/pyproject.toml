@@ -1,0 +1,121 @@
+[project]
+name = "taskflow-auth"
+version = "0.1.0"
+description = "TaskFlow JWT validation middleware (Feature 101, story A2)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+# Runtime dependencies. Bounded ranges: lower bound is the minimum version whose
+# API this code relies on, upper bound guards against breaking major releases.
+dependencies = [
+    "fastapi>=0.110,<0.120",
+    "pydantic>=2.6,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    # JOSE implementation (docs/decisions/0001-jwt-library-choice.md, DEV-001).
+    # The >=2.13 floor is a security floor, not an API floor: 2.13 fixes
+    # CVE-2026-48526, an algorithm-confusion flaw when decoding with a raw JWK
+    # while mixed algorithm families are supported — which is exactly how
+    # src/auth/token.py verifies Cognito tokens. Do not lower it.
+    "pyjwt[crypto]>=2.13,<3.0",
+    "httpx>=0.27,<0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-asyncio>=0.24,<1.3",
+    "ruff>=0.6,<1.0",
+    "mypy>=1.11,<2.0",
+    # Test-only JOSE implementation: fixtures mint tokens with python-jose so the
+    # suite exercises PyJWT against tokens it did not produce itself
+    # (docs/decisions/0001-jwt-library-choice.md, story A2 task 5.4).
+    "python-jose[cryptography]>=3.4,<4.0",
+    # Imported directly by tests/unit/auth/conftest.py for RSA key generation.
+    # Runtime code gets it transitively via pyjwt[crypto]; tests declare it.
+    "cryptography>=43,<50",
+]
+
+[build-system]
+requires = ["hatchling>=1.24,<2.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auth"]
+
+# --------------------------------------------------------------------------- #
+# ruff — linting + formatting (see .kiro/steering/coding-standards.md)
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "ANN", # flake8-annotations — type hints on every signature
+    "ARG", # flake8-unused-arguments
+    "ASYNC", # flake8-async
+    "B",   # flake8-bugbear
+    "BLE", # flake8-blind-except — no bare `except`
+    "C4",  # flake8-comprehensions
+    "D",   # pydocstyle
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "PL",  # pylint
+    "RET", # flake8-return
+    "RUF", # ruff-specific rules
+    "S",   # flake8-bandit
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "D203", # incompatible with D211 (blank line before class docstring)
+    "D213", # incompatible with D212 (multi-line summary position)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use `assert`, inline literal status codes, and short-lived fake secrets.
+"tests/**/*.py" = ["S101", "S105", "S106", "PLR2004"]
+# N818 wants an `Error` suffix on every exception. The exception names here are
+# fixed by the design: `AppException` by coding-standards.md, and ExpiredToken /
+# InvalidSignature / InvalidClaims by story A2 task 3.5.
+"src/auth/exceptions.py" = ["N818"]
+
+# --------------------------------------------------------------------------- #
+# mypy — strict typing on application code
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = "src"
+files = ["src"]
+# The pydantic plugin understands that BaseSettings fields are populated from the
+# environment, so `AuthSettings()` is not reported as missing arguments.
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# --------------------------------------------------------------------------- #
+# pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--strict-markers --strict-config"

@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Lambda Convention Check",
+      "description": "Verifies Lambda handlers follow the Powertools conventions in coding-standards.md.",
+      "trigger": "PostFileSave",
+      "matcher": "^src/functions/.*\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "A Lambda handler was modified. Verify it against .kiro/steering/coding-standards.md:\n\n1. Uses the shared Powertools Logger, Tracer and Metrics from the common layer, not its own instances.\n2. Handler signature is typed: (event: dict[str, Any], context: LambdaContext).\n3. Decorated with @logger.inject_lambda_context(correlation_id_path=...) so correlation IDs propagate.\n4. Returns a structured response, never a bare string.\n5. No bare except. Unrecoverable errors raise so the event reaches the DLQ rather than being silently swallowed.\n6. Business metrics emitted via Metrics, not print or log lines.\n\nReport only violations, one line each. If compliant, say 'Compliant' and stop."
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Work-Item Map for Feature 301 — Terraform Foundation
+
+feature:
+  id: 301
+  title: Terraform Foundation
+  parent_epic: Epic 3 — Platform Infrastructure
+  priority: 1
+  effort: 12
+
+scheduling:
+  pi: PI-1
+  sprints: [S1, S2]
+
+capacity:
+  alice: { s1: 3, s2: 3, total: 6 }
+  bob:   { s1: 3, s2: 3, total: 6 }
+  total: { s1: 6, s2: 6, total: 12 }
+
+stories:
+  I1: { trackerId: ADO-12311, file: stories/I1-ADO-12311-terraform-foundation.md }
+  I2: { trackerId: ADO-12312, file: stories/I2-ADO-12312-vpc-networking.md }
+  I3: { trackerId: ADO-12313, file: stories/I3-ADO-12313-ecs-cluster.md }
+  I4: { trackerId: ADO-12314, file: stories/I4-ADO-12314-aurora-s3-kms.md }
+
+deviations_from_design:
+  - id: DEV-002
+    topic: Terraform state locking mechanism
+    design_says: "DEC-101 mentions S3 + native locking without specifying the exact backend config"
+    reality: "S3 with use_lockfile = true (Terraform 1.14+ native locking); no DynamoDB lock table"
+    reason: "DynamoDB lock table adds operational overhead without benefit on Terraform >= 1.14; documented in I1 post-implementation"
+    captured_in: docs/decisions/0002-terraform-state-management.md
+
+deferred_to_next_pi:
+  - Multi-region DR
+  - CloudFront CDN
+  - WAF rules
+  - VPC Endpoints for AWS APIs
+
+retired: []
+
+lastSync: 2026-07-18T09:42:00Z

@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Lint on Save",
+      "description": "Runs the project linter after the agent modifies a source file. REPLACE the command with your linter before enabling.",
+      "trigger": "PostFileSave",
+      "matcher": "^src/.*\\.(py|ts|tsx|cs|go|java)$",
+      "timeout": 60,
+      "action": {
+        "type": "command",
+        "command": "echo 'lint-on-save is not configured yet. Edit .kiro/hooks/lint-on-save.json and replace this command with your linter, for example: ruff check --fix src/ | npx eslint --fix src/ | dotnet format' >&2; exit 1"
+      }
+    }
+  ]
+}

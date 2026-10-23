@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Dependency Audit",
+      "description": "Flags unpinned or newly added dependencies when a manifest changes.",
+      "trigger": "PostFileSave",
+      "matcher": "(requirements.*\\.txt|pyproject\\.toml|package\\.json|\\.csproj|go\\.mod)$",
+      "action": {
+        "type": "agent",
+        "prompt": "A dependency manifest changed. Review the diff:\n\n1. Is every new dependency pinned to an exact or tightly bounded version?\n2. Is each new dependency actively maintained, and is the name free of typosquatting risk?\n3. Does anything added here duplicate a capability the project already depends on?\n4. Does it introduce a license incompatible with the project's license?\n\nList concerns with the package name. If the change is clean, say so in one line."
+      }
+    }
+  ]
+}

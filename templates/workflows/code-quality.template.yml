@@ -1,0 +1,168 @@
+# =============================================================================
+# Code Quality  →  copy to .github/workflows/code-quality.yml
+# =============================================================================
+# ENFORCES
+#   The lint / type / test gates that steering files describe as mandatory,
+#   applied where they cannot be skipped. The same commands your lint-on-save
+#   and test-after-task hooks run locally: CI is the backstop for the developer
+#   who has hooks disabled, not a second, different standard.
+#     ruff check          lint
+#     ruff format --check formatting (does not rewrite files in CI)
+#     mypy                static types
+#     pytest --cov        tests with a coverage floor
+#
+# REQUIRES BEFORE IT WILL RUN
+#   A dev dependency group that installs ruff, mypy, pytest and pytest-cov.
+#   [PLACEHOLDER] Adjust the install step to your project: pyproject extras,
+#   requirements-dev.txt, uv, poetry, or pdm. Pin those tool versions in the
+#   dependency file so CI and laptops agree; an unpinned linter turns a
+#   green PR red on an unrelated release day.
+#   No secrets. No vars. No environments. No OIDC role.
+#
+# REQUIRED CHECK
+#   YES. Protect main on the status check named "python (3.12)" — the matrix
+#   suffix is part of the check name, so it changes if you edit the matrix.
+# =============================================================================
+
+name: Code Quality
+
+on:
+  pull_request:
+    paths:
+      # [PLACEHOLDER] Match your source layout.
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+      - '.github/workflows/code-quality.yml'
+
+# Least privilege: reads the repository, writes nothing. Annotations from
+# ruff's --output-format=github come through the check-run channel and need no
+# additional scope.
+permissions:
+  contents: read
+
+concurrency:
+  group: code-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Matrix-ready but single-version by default: one job is faster feedback
+      # and a shorter required-check list. Add versions only when you actually
+      # support them.
+      #   python-version: ['3.11', '3.12', '3.13']
+      # fail-fast: false so one version failing still reports the others.
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      # Pinned to released major tags. A full commit SHA (owner/action@<sha>)
+      # is stronger, because a major tag is mutable and can be repointed by the
+      # action owner. Pin SHAs if your organisation requires it.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        # [PLACEHOLDER] One of these, not all three.
+        #   pip install -e '.[dev]'
+        #   pip install -r requirements-dev.txt
+        #   pipx run uv pip install --system -r requirements-dev.txt
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      # --output-format=github turns findings into inline PR annotations, so a
+      # reviewer sees them on the diff instead of digging through the log.
+      - name: ruff check
+        run: ruff check --output-format=github .
+
+      # --check only reports. Formatting is not fixed in CI on purpose: a bot
+      # commit on a PR branch invalidates approvals and confuses the diff.
+      - name: ruff format
+        run: ruff format --check --diff .
+
+      - name: mypy
+        run: mypy src
+
+      - name: pytest
+        run: |
+          set -euo pipefail
+          pytest \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=[PLACEHOLDER] \
+            --junitxml=junit.xml
+
+      # Kept on always() so a failing run still uploads the report that
+      # explains why.
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-py${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            junit.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+# =============================================================================
+# [PLACEHOLDER] Other stacks
+# =============================================================================
+# Same shape every time: pin the toolchain, lint, check formatting, type-check,
+# test with a coverage floor. Swap the job body and the `paths` filter above.
+#
+# Node / TypeScript
+#   jobs:
+#     node:
+#       name: node (${{ matrix.node-version }})
+#       runs-on: ubuntu-latest
+#       strategy:
+#         matrix:
+#           node-version: ['22.x']
+#       steps:
+#         - uses: actions/checkout@v5
+#         - uses: actions/setup-node@v4
+#           with:
+#             node-version: ${{ matrix.node-version }}
+#             cache: npm
+#         - run: npm ci                      # lockfile-exact, unlike npm install
+#         - run: npx eslint . --max-warnings=0
+#         - run: npx prettier --check .
+#         - run: npx tsc --noEmit
+#         - run: npm test -- --coverage
+#
+# .NET
+#   jobs:
+#     dotnet:
+#       name: dotnet (${{ matrix.dotnet-version }})
+#       runs-on: ubuntu-latest
+#       strategy:
+#         matrix:
+#           dotnet-version: ['8.0.x']
+#       steps:
+#         - uses: actions/checkout@v5
+#         - uses: actions/setup-dotnet@v4
+#           with:
+#             dotnet-version: ${{ matrix.dotnet-version }}
+#         - run: dotnet restore
+#         - run: dotnet format --verify-no-changes
+#         - run: dotnet build --no-restore --configuration Release
+#             /warnaserror
+#         - run: dotnet test --no-build --configuration Release
+#             --collect:"XPlat Code Coverage"
+# =============================================================================

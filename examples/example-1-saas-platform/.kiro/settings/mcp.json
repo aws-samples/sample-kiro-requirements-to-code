@@ -1,0 +1,57 @@
+{
+  "mcpServers": {
+    "azureDevOps": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@tiberriver256/mcp-server-azure-devops"
+      ],
+      "env": {
+        "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/YOUR-ORG",
+        "AZURE_DEVOPS_AUTH_METHOD": "pat",
+        "AZURE_DEVOPS_PAT": "${AZURE_DEVOPS_PAT}",
+        "AZURE_DEVOPS_DEFAULT_PROJECT": "Your Project"
+      },
+      "disabled": true,
+      "autoApprove": [
+        "get_work_item",
+        "search_work_items",
+        "list_work_items",
+        "get_project_details"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "disabled": true,
+      "autoApprove": [
+        "get_issue",
+        "list_issues",
+        "get_pull_request",
+        "list_pull_requests",
+        "get_file_contents"
+      ]
+    },
+    "aws-docs": {
+      "command": "uvx",
+      "args": [
+        "awslabs.aws-documentation-mcp-server@latest"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "search_documentation",
+        "read_documentation",
+        "read_sections"
+      ]
+    }
+  }
+}

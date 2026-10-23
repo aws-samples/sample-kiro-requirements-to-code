@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Terraform Validate",
+      "description": "Formats and validates Terraform after the agent edits a .tf file under infra/.",
+      "trigger": "PostFileSave",
+      "matcher": "^infra/.*\\.tf$",
+      "timeout": 180,
+      "action": {
+        "type": "command",
+        "command": "terraform fmt -recursive infra/ && terraform -chdir=infra/terraform validate"
+      }
+    }
+  ]
+}

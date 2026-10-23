@@ -1,0 +1,245 @@
+# =============================================================================
+# Terraform Apply  →  copy to .github/workflows/terraform-apply.yml
+# =============================================================================
+# ENFORCES
+#   The delivery half of the PR flow in infra-guidelines.md: apply on merge for
+#   dev, manual approval for prod.
+#
+#   dev  auto-applies. The `dev` GitHub Environment has no protection rules, so
+#        the apply job starts as soon as the plan job finishes.
+#   prod requires manual approval. The gate is the `prod` GitHub Environment's
+#        protection rules (required reviewers), NOT anything in this file.
+#        Nothing here can be edited to bypass it: environment protection is
+#        enforced by GitHub before the job's first step runs, and changing the
+#        reviewer list is an audited repository-settings change.
+#
+#   The workflow plans first, uploads the saved plan, then applies exactly that
+#   file after approval. Two jobs rather than one because an environment gate
+#   pauses a job *before* its first step: with plan and apply in the same job,
+#   the reviewer would be approving without ever seeing the plan.
+#
+# CREDENTIALS
+#   OIDC role assumption via aws-actions/configure-aws-credentials with
+#   `permissions: id-token: write`. NEVER long-lived IAM user keys. Two roles,
+#   deliberately:
+#     - the ungated plan job assumes a READ-ONLY role held at repository level
+#     - the gated apply job assumes a WRITE role held as an ENVIRONMENT secret,
+#       so the same expression resolves to a different role for dev and prod
+#       and a dev apply physically cannot reach prod
+#   Write credentials therefore only ever exist inside the approved job.
+#
+# REQUIRES BEFORE IT WILL RUN
+#   Environments      dev, prod  (Settings → Environments)
+#                     prod: add required reviewers. Without that, prod applies
+#                     without approval and this workflow's contract is broken.
+#   Per environment   secrets.AWS_APPLY_ROLE_ARN   write role, e.g.
+#                       arn:aws:iam::111122223333:role/[PLACEHOLDER]
+#   Repository        secrets.AWS_PLAN_ROLE_ARN    read-only role for planning
+#                     vars.AWS_REGION
+#                     vars.TF_STATE_BUCKET
+#                     vars.TERRAFORM_VERSION       matches required_version
+#   State key convention: <environment>/terraform.tfstate, derived from the
+#   target environment name. [PLACEHOLDER] Adjust the -backend-config below if
+#   your key layout differs.
+#   One-time AWS setup: GitHub OIDC provider + per-environment roles. See
+#   templates/workflows/README.md.
+#
+# REQUIRED CHECK
+#   NO. This runs after merge; it is a deployment, not a PR gate. Watch it with
+#   branch-deployment notifications instead.
+# =============================================================================
+
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-apply.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+# Serialises every run of this workflow per target environment. Terraform holds
+# a lock on remote state for the duration of an apply; a second run that starts
+# while the first is mid-apply fails on lock acquisition, and if the lock is
+# force-unlocked to clear it you risk two writers against one state file.
+#
+# cancel-in-progress MUST stay false. Cancelling an in-flight apply leaves
+# created-but-unrecorded resources and, worse, a stale lock.
+concurrency:
+  group: terraform-apply-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+env:
+  # [PLACEHOLDER] Root Terraform composition directory.
+  TF_WORKING_DIR: infra/terraform
+  TF_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Plan. Runs unattended, produces the artifact the approver reviews.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: plan (${{ github.event.inputs.environment || 'dev' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    # No `environment:` here on purpose. Attaching one would make the approval
+    # gate fire before the plan exists, which is the problem this split solves.
+    # It also keeps this job's credentials read-only.
+    outputs:
+      target: ${{ github.event.inputs.environment || 'dev' }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      # Pinned to released major tags. A full commit SHA (owner/action@<sha>)
+      # is stronger, since a major tag is mutable and can be repointed by the
+      # action owner. Pin SHAs if your organisation requires it.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Read-only role: this job runs without approval, so it must not hold
+      # credentials that can change anything.
+      - name: Configure AWS credentials (OIDC, no static keys)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-plan-${{ github.run_id }}
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_ENV: ${{ github.event.inputs.environment || 'dev' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_ENV}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform plan
+        env:
+          TF_ENV: ${{ github.event.inputs.environment || 'dev' }}
+        run: |
+          set -euo pipefail
+          terraform plan -no-color -lock-timeout=5m -out=tfplan.binary \
+            -var-file="environments/${TF_ENV}.tfvars"
+          terraform show -no-color tfplan.binary > tfplan.txt
+
+      - name: Add plan to the run summary
+        run: |
+          {
+            echo '### terraform plan'
+            echo ''
+            echo '```terraform'
+            tail -c 60000 tfplan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A saved plan file can contain resource attribute values, and anyone
+      # with read access to the repository can download workflow artifacts.
+      # Keep retention short, and if your plans include sensitive attributes,
+      # delete these two steps and re-plan inside the gated apply job instead
+      # (you trade reviewer visibility for confidentiality — decide knowingly).
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment || 'dev' }}-${{ github.run_id }}
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan.binary
+            ${{ env.TF_WORKING_DIR }}/tfplan.txt
+          retention-days: 5
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2. Apply. Gated by environment protection rules for prod.
+  # ---------------------------------------------------------------------------
+  apply:
+    name: apply (${{ needs.plan.outputs.target }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    # THE approval gate. dev has no protection rules and flows straight
+    # through; prod holds here until a required reviewer approves.
+    environment:
+      name: ${{ needs.plan.outputs.target }}
+      # [PLACEHOLDER] Optional: surface the deployed endpoint on the PR/commit.
+      # url: https://[PLACEHOLDER]
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.plan.outputs.target }}-${{ github.run_id }}
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Configure AWS credentials (OIDC, no static keys)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-apply-${{ github.run_id }}
+
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_ENV: ${{ needs.plan.outputs.target }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_ENV}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      # Applies the saved plan, not a fresh one. -auto-approve is safe here
+      # precisely because the plan is a file: Terraform refuses it if state has
+      # moved since the plan was taken, so approval cannot be granted for one
+      # set of changes and executed against another.
+      - name: terraform apply
+        run: terraform apply -no-color -lock-timeout=5m -auto-approve tfplan.binary
+
+      - name: Add outcome to the run summary
+        if: always()
+        run: |
+          echo "### terraform apply: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

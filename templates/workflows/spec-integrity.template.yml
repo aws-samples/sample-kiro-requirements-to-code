@@ -1,0 +1,151 @@
+# =============================================================================
+# Spec Integrity  →  copy to .github/workflows/spec-integrity.yml
+# =============================================================================
+# ENFORCES
+#   Spec-driven development stops being a convention and becomes a contract.
+#   Runs check-spec-integrity.py --strict, which fails the build on:
+#     E1  a story listed in work-item-map.yaml does not exist on disk
+#     E2  a story file on disk is not listed in work-item-map.yaml
+#     E3  tasks.md references a story ref with no story file
+#     E4  dependsOn points at a ref that is not a story in this repo
+#     E5  a story marked Done still has unchecked implementation tasks
+#     E6  a story ref is reused across features (refs are global)
+#     E7  a story depends on itself, or a dependency cycle exists
+#     E8  a story file has no 'ref' in its front matter
+#     W1  work-item-map capacity totals disagree with summed story effort
+#     W2  a story is Done but was never synced to the tracker
+#     W3  a story with every task checked has not been moved to Done
+#   Also validates every hook JSON against the v1 schema, so a malformed hook
+#   cannot reach main and silently stop firing for the whole team.
+#
+# WHY THIS ONE MATTERS MOST
+#   Manual review catches spec drift for two developers. It does not catch it
+#   for twenty-five. Every failure class above is mechanically detectable and
+#   every one of them has shipped to main in real repos.
+#
+# REQUIRES BEFORE IT WILL RUN
+#   - .kiro/hooks/scripts/check-spec-integrity.py  (copy from templates/hooks/scripts/)
+#   - .kiro/hooks/scripts/check-hook-schema.py     (copy from templates/hooks/scripts/)
+#   No secrets. No vars. No environments. No OIDC role. No package installs.
+#   Both scripts are stdlib-only by design, so this workflow is the same code
+#   the PostFileSave hook runs on a developer's laptop.
+#
+# REQUIRED CHECK
+#   YES. Make this blocking. Settings → Branches → protect main → require the
+#   status check named "spec-integrity". Without branch protection this
+#   workflow reports problems that everyone is free to merge past.
+# =============================================================================
+
+name: Spec Integrity
+
+on:
+  pull_request:
+    paths:
+      # Spec changes are the primary trigger.
+      - '.kiro/specs/**'
+      # Hook changes are included so the schema gate below actually guards the
+      # merge. A hook-only PR would otherwise skip this workflow entirely.
+      - '.kiro/hooks/**'
+      # Self-check: changes to this file are validated by this file.
+      - '.github/workflows/spec-integrity.yml'
+  push:
+    branches:
+      - main
+
+# Least privilege: this workflow only reads the repository. It posts no
+# comments, so it needs no write scope anywhere.
+permissions:
+  contents: read
+
+concurrency:
+  group: spec-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The job name is the status-check name you protect the branch with.
+  # Renaming this job breaks branch protection silently — it shows as a
+  # missing required check rather than a failure.
+  spec-integrity:
+    name: spec-integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # Every third-party action is pinned to a released major tag. Pinning to
+      # a full commit SHA (actions/checkout@<40-char-sha>) is stronger: a major
+      # tag is mutable and can be repointed by the action owner. Teams under
+      # supply-chain review requirements should pin SHAs and let Dependabot
+      # bump them.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Python 3.12 with no pip install step. That is deliberate, not an
+      # oversight: both checkers are standard-library only (no PyYAML, no
+      # requests), which keeps this gate fast, offline-capable, and immune to
+      # a broken index or a compromised transitive dependency. Keep it that
+      # way if you extend the scripts.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify checkers are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for script in \
+            .kiro/hooks/scripts/check-spec-integrity.py \
+            .kiro/hooks/scripts/check-hook-schema.py
+          do
+            if [ ! -f "$script" ]; then
+              echo "::error::$script is missing. Copy it from templates/hooks/scripts/."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # --strict promotes W1/W2 warnings to errors. On a protected branch a
+      # warning nobody has to act on is a warning nobody acts on: "Done but
+      # never synced to the tracker" (W2) and "capacity total disagrees with
+      # story effort" (W1) are exactly the drift that makes a sprint board
+      # lie. Locally the hook runs without --strict so warnings stay advisory
+      # mid-edit; CI is where they become blocking.
+      #
+      # Monorepo: add --specs-dir <path>/.kiro/specs if your specs are not at
+      # the repository root.
+      - name: Check spec integrity (strict)
+        id: integrity
+        run: |
+          set +e
+          python3 .kiro/hooks/scripts/check-spec-integrity.py --strict > integrity.log 2>&1
+          status=$?
+          set -e
+          {
+            echo '### Spec integrity (--strict)'
+            echo ''
+            echo '```text'
+            cat integrity.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat integrity.log
+          exit "$status"
+
+      # always() so a spec failure and a hook failure are both reported in one
+      # run. Without it a developer fixes the spec, pushes, and only then
+      # discovers the hook problem — two round trips instead of one.
+      - name: Validate hook JSON against the v1 schema
+        if: always() && steps.integrity.outcome != 'skipped'
+        run: |
+          set +e
+          python3 .kiro/hooks/scripts/check-hook-schema.py .kiro/hooks > hooks.log 2>&1
+          status=$?
+          set -e
+          {
+            echo '### Hook schema'
+            echo ''
+            echo '```text'
+            cat hooks.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat hooks.log
+          exit "$status"

@@ -1,0 +1,48 @@
+# Work-Item Map for Feature [ID] — [Title]
+# Source of truth: story files. This is an index.
+# Sync rules: see .kiro/steering/work-item-sync-playbook.md
+#
+# Bracketed placeholders are quoted so this file parses as YAML the moment it
+# is copied — spec hooks and linters can run before you finish customizing.
+# Replace every "[...]" value, then drop the quotes where the real value is a
+# number (effort) or a plain identifier (owner aliases).
+
+feature:
+  id: "[FEATURE_ID]"
+  title: "[FEATURE_TITLE]"
+  parent_epic: "[EPIC_NAME]"
+  priority: 2
+  effort: "[TOTAL_PD]"
+
+scheduling:
+  pi: "[PI-N]"
+  sprints: [S1, S2, S3]
+
+capacity:
+  "[PERSON1]": { s1: 0, s2: 0, s3: 0, total: 0 }
+  "[PERSON2]": { s1: 0, s2: 0, s3: 0, total: 0 }
+  total:       { s1: 0, s2: 0, s3: 0, total: 0 }
+
+# Compact index: ref → tracker ID → file path
+stories:
+  "[REF1]": { trackerId: pending, file: "stories/[REF1]-pending-[slug].md" }
+  "[REF2]": { trackerId: pending, file: "stories/[REF2]-pending-[slug].md" }
+
+# Track where implementation diverges from design
+deviations_from_design: []
+#  - id: DEV-001
+#    topic: "[What diverged]"
+#    design_says: "[Original design intent]"
+#    reality: "[What we actually did]"
+#    reason: "[Why we diverged]"
+#    captured_in: docs/decisions/000X-[slug].md
+
+# Explicitly descoped items
+deferred_to_next_pi:
+  - "[Item 1]"
+  - "[Item 2]"
+
+# Stories that were removed (not deleted, for audit trail)
+retired: []
+
+lastSync: 1970-01-01T00:00:00Z

@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Session Context",
+      "description": "Prints branch, uncommitted file count and in-flight stories at session start. STDOUT is added to the agent's context.",
+      "trigger": "SessionStart",
+      "timeout": 30,
+      "action": {
+        "type": "command",
+        "command": "python3 .kiro/hooks/scripts/session-context.py"
+      }
+    }
+  ]
+}

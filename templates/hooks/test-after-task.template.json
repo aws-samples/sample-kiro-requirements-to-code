@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run Tests After Task",
+      "description": "Runs the test suite when a spec task is marked complete. REPLACE the command with your test runner before enabling.",
+      "trigger": "PostTaskExec",
+      "timeout": 300,
+      "action": {
+        "type": "command",
+        "command": "echo 'test-after-task is not configured yet. Edit .kiro/hooks/test-after-task.json and replace this command with your test runner, for example: pytest -q | npm test -- --run | dotnet test' >&2; exit 1"
+      }
+    }
+  ]
+}

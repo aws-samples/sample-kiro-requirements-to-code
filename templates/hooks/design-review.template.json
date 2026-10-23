@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Architecture Alignment Review",
+      "description": "Reviews newly created source and infrastructure files against the architecture and conventions in steering.",
+      "trigger": "PostFileCreate",
+      "matcher": "^(src|infra)/",
+      "action": {
+        "type": "agent",
+        "prompt": "A new file was created under src/ or infra/. Review it against the conventions in .kiro/steering/:\n\n1. Is it in the correct directory per repository-structure.md?\n2. Does it follow the naming conventions in coding-standards.md?\n3. Does it match the expected shape for its type (handler, service, module)?\n4. Are the required elements present (type hints, docstrings, error handling, variable descriptions)?\n\nKeep feedback to the violations you find. If it is aligned, say so in one line and stop."
+      }
+    }
+  ]
+}

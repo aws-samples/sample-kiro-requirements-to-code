@@ -1,0 +1,138 @@
+# Work Item Link Check — adapted from templates/workflows/work-item-link-check.template.yml
+# Verifies every PR references a real story file and carries that story's tracker ID.
+# REQUIRED CHECK: YES — protect main on "work-item-link-check".
+# REQUIRES: nothing — stdlib Python only.
+
+name: Work Item Link Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: work-item-link-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  work-item-link-check:
+    name: work-item-link-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check the PR links to a real story
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          SPECS_DIR: .kiro/specs
+          SKIP_LABEL: no-story
+          # Set to false once all stories have been synced to ADO.
+          ALLOW_PENDING_TRACKER: 'true'
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+          import os, re, sys
+          from pathlib import Path
+
+          FRONT_MATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---", re.DOTALL)
+          MARKER = re.compile(r"^[ \t>*-]*(?:story|stories|story-ref|refs?)\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+          BARE_REF = re.compile(r"\b([A-Z]{1,3}[0-9]{1,3})\b")
+
+          def front_matter(text):
+              match = FRONT_MATTER.search(text)
+              if not match: return {}
+              fields = {}
+              for line in match.group(1).splitlines():
+                  line = line.split("#", 1)[0].rstrip()
+                  if ":" not in line or line.lstrip().startswith("#"): continue
+                  key, _, value = line.partition(":")
+                  fields[key.strip()] = value.strip().strip('"')
+              return fields
+
+          def load_stories(specs_dir):
+              stories = {}
+              for path in sorted(specs_dir.glob("**/stories/*.md")):
+                  if path.name.upper() == "README.MD": continue
+                  fields = front_matter(path.read_text(encoding="utf-8"))
+                  ref = fields.get("ref", "").strip().upper()
+                  if ref: stories[ref] = (path, fields)
+              return stories
+
+          def candidate_refs(title, body, branch):
+              marked = []
+              for value in MARKER.findall(f"{title}\n{body}"):
+                  marked.extend(BARE_REF.findall(value.upper()))
+              if marked: return list(dict.fromkeys(marked)), "explicit Story:/Refs: trailer"
+              found = BARE_REF.findall(title) + BARE_REF.findall(body) + BARE_REF.findall(branch.upper())
+              return list(dict.fromkeys(found)), "PR title, body or branch name"
+
+          def emit(lines):
+              text = "\n".join(lines)
+              print(text)
+              summary = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary:
+                  with open(summary, "a") as f:
+                      f.write("### Work item link check\n\n" + text + "\n")
+
+          def main():
+              title = os.environ.get("PR_TITLE") or ""
+              body = os.environ.get("PR_BODY") or ""
+              branch = os.environ.get("PR_BRANCH") or ""
+              labels = [l.strip() for l in (os.environ.get("PR_LABELS") or "").split(",") if l.strip()]
+              skip_label = (os.environ.get("SKIP_LABEL") or "").strip()
+              allow_pending = (os.environ.get("ALLOW_PENDING_TRACKER", "true").lower() == "true")
+              specs_dir = Path(os.environ.get("SPECS_DIR") or ".kiro/specs")
+              if skip_label and skip_label in labels:
+                  emit([f"Skipped: the '{skip_label}' label is applied."]); return 0
+              if not specs_dir.is_dir():
+                  emit([f"No spec directory at {specs_dir}."]); return 0
+              stories = load_stories(specs_dir)
+              if not stories:
+                  emit(["No story files found."]); return 0
+              refs, source = candidate_refs(title, body, branch)
+              resolved = [r for r in refs if r in stories]
+              unresolved = [r for r in refs if r not in stories]
+              if not resolved:
+                  known = ", ".join(sorted(stories)) or "(none)"
+                  emit(["FAIL: this PR does not reference a story that exists.", "",
+                        f"  Searched: {source}", f"  Candidates: {', '.join(refs) if refs else '(none)'}",
+                        f"  Known story refs: {known}", "", "  Add: Story: A1  Work-Item: 12345",
+                        f"  For no-story PRs, apply the '{skip_label or 'no-story'}' label."])
+                  print("::error::PR does not reference an existing story ref."); return 1
+              lines = []; failures = 0; haystack = f"{title}\n{body}"
+              for ref in resolved:
+                  path, fields = stories[ref]
+                  tracker = (fields.get("trackerId") or "").strip()
+                  state = fields.get("state") or "?"
+                  lines.append(f"Resolved {ref} -> {path} (state: {state}, trackerId: {tracker or 'missing'})")
+                  if tracker in ("", "pending"):
+                      msg = f"  {ref} has no tracker ID yet. Sync to ADO to complete the trace."
+                      if allow_pending: lines.append(msg); print(f"::notice::{msg.strip()}")
+                      else: lines.append("FAIL:" + msg); failures += 1
+                  elif tracker not in haystack:
+                      lines.append(f"FAIL: {ref} tracked as {tracker} but not in PR. Add 'Work-Item: {tracker}'.")
+                      failures += 1
+                  else:
+                      lines.append(f"  tracker ID {tracker} present in PR.")
+              if unresolved:
+                  lines.append("Ignored refs with no story file: " + ", ".join(unresolved))
+              lines.insert(0, "FAIL" if failures else "PASS")
+              emit(lines)
+              if failures: print("::error::PR is missing the tracker ID for a referenced story."); return 1
+              return 0
+
+          sys.exit(main())
+          PY

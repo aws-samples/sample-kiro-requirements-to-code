@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "API Contract Check",
+      "description": "Verifies route changes stay consistent with the documented API conventions and the OpenAPI contract.",
+      "trigger": "PostFileSave",
+      "matcher": "^src/api/.*\\.(py|ts|cs)$",
+      "action": {
+        "type": "agent",
+        "prompt": "An API route file changed. Check it against api-guidelines.md in steering:\n\n1. Do all routes declare explicit request and response models?\n2. Do error responses use the project's standard error envelope?\n3. Is the route versioned per convention?\n4. If the committed OpenAPI contract no longer matches these routes, say which paths drifted.\n\nReport only violations. Do not edit the contract file without being asked."
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+# Spec Integrity — adapted from templates/workflows/spec-integrity.template.yml
+# Enforces spec-driven development as a required CI gate for example-2-data-pipeline.
+# Runs check-spec-integrity.py --strict (E1–E8 errors, W1–W3 promoted to errors)
+# and validates all hook JSON files against the v1 schema.
+#
+# REQUIRED CHECK: YES — protect main on the status check named "spec-integrity".
+# REQUIRES: .kiro/hooks/scripts/check-spec-integrity.py and check-hook-schema.py
+#            (already present in this example).
+
+name: Spec Integrity
+
+on:
+  pull_request:
+    paths:
+      - '.kiro/specs/**'
+      - '.kiro/hooks/**'
+      - '.github/workflows/spec-integrity.yml'
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spec-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec-integrity:
+    name: spec-integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify checkers are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for script in \
+            .kiro/hooks/scripts/check-spec-integrity.py \
+            .kiro/hooks/scripts/check-hook-schema.py
+          do
+            if [ ! -f "$script" ]; then
+              echo "::error::$script is missing."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check spec integrity (strict)
+        id: integrity
+        run: |
+          set +e
+          python3 .kiro/hooks/scripts/check-spec-integrity.py --strict > integrity.log 2>&1
+          status=$?
+          set -e
+          {
+            echo '### Spec integrity (--strict)'
+            echo ''
+            echo '```text'
+            cat integrity.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat integrity.log
+          exit "$status"
+
+      - name: Validate hook JSON against the v1 schema
+        if: always() && steps.integrity.outcome != 'skipped'
+        run: |
+          set +e
+          python3 .kiro/hooks/scripts/check-hook-schema.py .kiro/hooks > hooks.log 2>&1
+          status=$?
+          set -e
+          {
+            echo '### Hook schema'
+            echo ''
+            echo '```text'
+            cat hooks.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat hooks.log
+          exit "$status"

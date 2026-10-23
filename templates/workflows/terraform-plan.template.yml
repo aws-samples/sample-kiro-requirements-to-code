@@ -1,0 +1,274 @@
+# =============================================================================
+# Terraform Plan  →  copy to .github/workflows/terraform-plan.yml
+# =============================================================================
+# ENFORCES
+#   The PR flow required by infra-guidelines.md steering: plan is posted as a
+#   PR comment, and the quality gates (terraform fmt, tflint, checkov) are
+#   blocking rather than advisory. A reviewer approves a diff of real resource
+#   changes, not a hope that someone ran plan locally.
+#
+# CREDENTIALS
+#   Authentication is OIDC role assumption via aws-actions/configure-aws-credentials
+#   with `permissions: id-token: write`. NEVER long-lived IAM user keys in
+#   GitHub secrets: they do not expire, they are readable by every workflow in
+#   the repository, and they survive the departure of whoever created them.
+#   The OIDC token is minted per run, scoped to this repository, and expires
+#   with the job. There is no supported reason to use static keys here.
+#
+# REQUIRES BEFORE IT WILL RUN
+#   secrets.AWS_PLAN_ROLE_ARN   IAM role ARN for the plan role, e.g.
+#                               arn:aws:iam::111122223333:role/[PLACEHOLDER]
+#                               Read-only + state access is enough for plan.
+#                               (An ARN is not really a secret; a repository
+#                               variable works equally well. Secret keeps the
+#                               account ID out of public logs.)
+#   vars.AWS_REGION             e.g. [PLACEHOLDER]
+#   vars.TF_STATE_BUCKET        remote state bucket name
+#   vars.TF_STATE_KEY           state key for the environment planned on PRs,
+#                               e.g. dev/terraform.tfstate
+#   vars.TF_PLAN_ENVIRONMENT    environment PRs plan against, e.g. dev
+#                               (resolves to environments/<value>.tfvars)
+#   vars.TERRAFORM_VERSION      must match required_version in versions.tf
+#   vars.TFLINT_VERSION         pin the linter, e.g. v0.52.0
+#   One-time AWS setup: a GitHub OIDC identity provider plus a role whose trust
+#   policy is scoped to this repository. See templates/workflows/README.md.
+#
+# REQUIRED CHECK
+#   YES for the gates. Protect main on the status check named "terraform-plan".
+#   Note the fork caveat below: PRs from forks run the static gates only, so a
+#   maintainer must re-run the branch inside the repository to get a plan.
+# =============================================================================
+
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-plan.yml'
+
+# Least privilege, scoped to exactly what the job does:
+#   contents: read        checkout
+#   pull-requests: write  post the plan comment
+#   id-token: write       mint the OIDC token for role assumption
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  # [PLACEHOLDER] Root Terraform composition directory.
+  TF_WORKING_DIR: infra/terraform
+  # [PLACEHOLDER] Set the TERRAFORM_VERSION repository variable to the version
+  # pinned in versions.tf. Leaving it unset installs the latest release, which
+  # drifts between runs and can write a newer state format than a teammate's
+  # CLI can read.
+  TF_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  # Terraform reads no colour codes and no interactive prompts in CI.
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terraform-plan:
+    name: terraform-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      # All actions are pinned to a released major tag. A full commit SHA
+      # (owner/action@<40-char-sha>) is stronger, because a major tag is
+      # mutable and can be repointed at new code by the action owner. Teams
+      # with supply-chain requirements should pin SHAs and let Dependabot bump
+      # them.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          # The wrapper captures stdout/stderr/exitcode as step outputs, which
+          # is how the plan text reaches the PR comment below.
+          terraform_wrapper: true
+
+      # ---------------------------------------------------------------------
+      # Static gates. These need no AWS access at all, so they run before any
+      # credentials exist — least privilege in time as well as in scope. They
+      # are also the only gates a forked PR can run (see the fork note below).
+      # ---------------------------------------------------------------------
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      # -backend=false validates syntax and provider schemas without touching
+      # remote state or needing credentials. The plan step re-initialises with
+      # the backend further down; that second init is required, not redundant.
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate -no-color
+
+      - name: Set up TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          # [PLACEHOLDER] Set the TFLINT_VERSION repository variable, e.g.
+          # "v0.52.0". Unset means latest, and a linter release then turns a
+          # green PR red on a day nobody changed any Terraform.
+          tflint_version: ${{ vars.TFLINT_VERSION }}
+          cache: true
+
+      - name: tflint
+        env:
+          # Authenticates plugin downloads so the AWS ruleset does not hit an
+          # anonymous API rate limit on busy repositories.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tflint --init
+          tflint --recursive --format compact
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          output_format: cli
+          quiet: true
+          # Blocking, per infra-guidelines.md. Do not flip this to true to get
+          # a merge through. Suppress a specific finding you have reviewed with
+          # skip_check below, or an inline `#checkov:skip=CKV_AWS_NNN:reason`,
+          # so the exception is reviewable in the diff.
+          soft_fail: false
+          # [PLACEHOLDER] e.g. CKV_AWS_18,CKV_AWS_144 — leave empty to skip none.
+          skip_check: ''
+
+      # ---------------------------------------------------------------------
+      # Plan. Everything below needs AWS credentials and a writable PR, so it
+      # is skipped for pull requests opened from a fork:
+      #   - GitHub does not issue an id-token to fork PR workflows, so OIDC
+      #     role assumption cannot succeed there
+      #   - the GITHUB_TOKEN is read-only for fork PRs, so commenting 403s
+      # A fork PR therefore reports fmt/validate/tflint/checkov and stops. To
+      # get a plan, a maintainer pushes the branch into this repository.
+      # ---------------------------------------------------------------------
+
+      - name: Configure AWS credentials (OIDC, no static keys)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-plan-${{ github.run_id }}
+
+      - name: terraform init (remote backend)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+
+      - name: terraform plan
+        id: plan
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        # continue-on-error so a failing plan still gets commented on the PR
+        # with its error text. The outcome is re-asserted in the last step, so
+        # the check still fails and still blocks merge.
+        continue-on-error: true
+        env:
+          # [PLACEHOLDER] Repository variable naming the environment PRs plan
+          # against, e.g. "dev". Resolves to environments/dev.tfvars.
+          TF_ENV: ${{ vars.TF_PLAN_ENVIRONMENT }}
+        run: |
+          terraform plan -no-color -lock-timeout=5m \
+            -var-file="environments/${TF_ENV}.tfvars"
+
+      - name: Write plan to the run summary
+        if: always() && steps.plan.outcome != 'skipped'
+        working-directory: ${{ github.workspace }}
+        env:
+          PLAN_STDOUT: ${{ steps.plan.outputs.stdout }}
+          PLAN_STDERR: ${{ steps.plan.outputs.stderr }}
+        run: |
+          {
+            echo '### terraform plan'
+            echo ''
+            echo '```terraform'
+            printf '%s\n' "$PLAN_STDOUT" "$PLAN_STDERR"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upserts a single comment instead of appending one per push, so a
+      # long-lived PR does not accumulate twenty stale plans.
+      - name: Post plan as a PR comment
+        if: always() && steps.plan.outcome != 'skipped' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        env:
+          PLAN_STDOUT: ${{ steps.plan.outputs.stdout }}
+          PLAN_STDERR: ${{ steps.plan.outputs.stderr }}
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const marker = '<!-- kiro:terraform-plan -->';
+            // A GitHub comment caps at 65536 characters. Plans against a large
+            // composition blow past that, so keep the tail (the summary line
+            // and the last resources) and point at the run for the full text.
+            const LIMIT = 60000;
+            let plan = `${process.env.PLAN_STDOUT || ''}${process.env.PLAN_STDERR || ''}`.trim();
+            let truncated = false;
+            if (plan.length > LIMIT) {
+              plan = plan.slice(plan.length - LIMIT);
+              truncated = true;
+            }
+            const status = process.env.PLAN_OUTCOME === 'success' ? 'succeeded' : 'FAILED';
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}` +
+              `/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = [
+              marker,
+              `### Terraform plan ${status}`,
+              '',
+              truncated ? `_Output truncated to the last ${LIMIT} characters. [Full log](${runUrl})._` : '',
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              plan || '(no output)',
+              '```',
+              '',
+              '</details>',
+              '',
+              `Commit \`${context.payload.pull_request.head.sha.slice(0, 7)}\` · [run log](${runUrl})`,
+            ].filter(Boolean).join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const existing = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = existing.find((c) => c.body && c.body.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      # Re-assert the plan result. continue-on-error above let the comment post
+      # on failure; this is what actually fails the required check.
+      - name: Fail if plan failed
+        if: always() && steps.plan.outcome == 'failure'
+        run: |
+          echo "::error::terraform plan failed. See the plan comment or the run log."
+          exit 1

@@ -1,0 +1,42 @@
+# Work-Item Map for Feature 101 — Authentication & Authorization
+# Source of truth: story files. This is an index.
+
+feature:
+  id: 101
+  title: Authentication & Authorization
+  parent_epic: Epic 1 — User & Tenant Management
+  priority: 2
+  effort: 14
+
+scheduling:
+  pi: PI-1
+  sprints: [S1, S2]
+
+capacity:
+  alice: { s1: 4, s2: 4, total: 8 }
+  bob:   { s1: 3, s2: 3, total: 6 }
+  total: { s1: 7, s2: 7, total: 14 }
+
+stories:
+  A1: { trackerId: ADO-12301, file: stories/A1-ADO-12301-cognito-terraform.md }
+  A2: { trackerId: ADO-12302, file: stories/A2-ADO-12302-jwt-middleware.md }
+  A3: { trackerId: ADO-12303, file: stories/A3-ADO-12303-rbac.md }
+  A4: { trackerId: ADO-12304, file: stories/A4-ADO-12304-tenant-isolation.md }
+
+deviations_from_design:
+  - id: DEV-001
+    topic: Runtime JOSE library
+    design_says: "No library named; story A2 planned python-jose throughout (task 5.4)"
+    reality: "PyJWT (pyjwt[crypto] >=2.13) at runtime; python-jose kept dev-only to mint test tokens"
+    reason: "PyJWT 2.13 fixes CVE-2026-48526 (algorithm confusion on raw-JWK decode), is typed, and is actively maintained"
+    captured_in: docs/decisions/0001-jwt-library-choice.md
+
+deferred_to_next_pi:
+  - Social login (Google, GitHub)
+  - Multi-factor authentication
+  - SSO federation with customer IdPs
+  - Policy engine migration (OPA/Cedar)
+
+retired: []
+
+lastSync: 2026-07-25T14:15:00Z

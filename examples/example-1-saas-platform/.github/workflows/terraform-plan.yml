@@ -1,0 +1,175 @@
+# Terraform Plan — adapted from templates/workflows/terraform-plan.template.yml
+# Posts a plan comment on every PR that touches infra/.
+# REQUIRED CHECK: YES — protect main on "terraform-plan".
+#
+# REQUIRES (GitHub repository secrets/vars — see templates/workflows/README.md):
+#   secrets.AWS_PLAN_ROLE_ARN   — read-only plan role for OIDC assumption
+#   vars.AWS_REGION             — e.g. us-east-1
+#   vars.TF_STATE_BUCKET        — remote state bucket name
+#   vars.TF_STATE_KEY           — e.g. dev/terraform.tfstate
+#   vars.TF_PLAN_ENVIRONMENT    — e.g. dev  (resolves to environments/dev.tfvars)
+#   vars.TERRAFORM_VERSION      — must match required_version in versions.tf (e.g. 1.14.0)
+#   vars.TFLINT_VERSION         — e.g. v0.52.0
+# One-time: register GitHub OIDC provider + plan role in AWS. See templates/workflows/README.md.
+
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-plan.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  TF_WORKING_DIR: infra/terraform
+  TF_VERSION: ${{ vars.TERRAFORM_VERSION }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  terraform-plan:
+    name: terraform-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: true
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate -no-color
+
+      - name: Set up TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: ${{ vars.TFLINT_VERSION }}
+          cache: true
+
+      - name: tflint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tflint --init
+          tflint --recursive --format compact
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          output_format: cli
+          quiet: true
+          soft_fail: false
+
+      - name: Configure AWS credentials (OIDC)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-terraform-plan-${{ github.run_id }}
+
+      - name: terraform init (remote backend)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          terraform init -reconfigure \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="region=${AWS_REGION}"
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+
+      - name: terraform plan
+        id: plan
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          TF_ENV: ${{ vars.TF_PLAN_ENVIRONMENT }}
+        run: |
+          terraform plan -no-color -lock-timeout=5m \
+            -var-file="environments/${TF_ENV}.tfvars"
+
+      - name: Write plan to the run summary
+        if: always() && steps.plan.outcome != 'skipped'
+        working-directory: ${{ github.workspace }}
+        env:
+          PLAN_STDOUT: ${{ steps.plan.outputs.stdout }}
+          PLAN_STDERR: ${{ steps.plan.outputs.stderr }}
+        run: |
+          {
+            echo '### terraform plan'
+            echo '```terraform'
+            printf '%s\n' "$PLAN_STDOUT" "$PLAN_STDERR"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post plan as PR comment
+        if: always() && steps.plan.outcome != 'skipped' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        env:
+          PLAN_STDOUT: ${{ steps.plan.outputs.stdout }}
+          PLAN_STDERR: ${{ steps.plan.outputs.stderr }}
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const marker = '<!-- kiro:terraform-plan -->';
+            const LIMIT = 60000;
+            let plan = `${process.env.PLAN_STDOUT || ''}${process.env.PLAN_STDERR || ''}`.trim();
+            let truncated = plan.length > LIMIT;
+            if (truncated) plan = plan.slice(plan.length - LIMIT);
+            const status = process.env.PLAN_OUTCOME === 'success' ? 'succeeded' : 'FAILED';
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = [
+              marker,
+              `### Terraform plan ${status}`,
+              truncated ? `_Output truncated. [Full log](${runUrl})._` : '',
+              '<details><summary>Show plan</summary>',
+              '```terraform',
+              plan || '(no output)',
+              '```',
+              '</details>',
+              `Commit \`${context.payload.pull_request.head.sha.slice(0, 7)}\` · [run log](${runUrl})`,
+            ].filter(Boolean).join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const existing = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const previous = existing.find(c => c.body && c.body.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail if plan failed
+        if: always() && steps.plan.outcome == 'failure'
+        run: |
+          echo "::error::terraform plan failed."
+          exit 1

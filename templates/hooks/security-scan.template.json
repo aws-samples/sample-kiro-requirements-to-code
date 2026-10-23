@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Infrastructure Security Scan",
+      "description": "Runs checkov against infrastructure code after the agent changes it. Non-blocking: findings are reported as a warning.",
+      "trigger": "PostFileSave",
+      "matcher": "^infra/.*\\.tf$",
+      "timeout": 180,
+      "action": {
+        "type": "command",
+        "command": "command -v checkov >/dev/null 2>&1 || { echo 'checkov not installed; skipping scan. Install with: pip install checkov' >&2; exit 1; }; checkov --directory infra --quiet --compact"
+      }
+    }
+  ]
+}

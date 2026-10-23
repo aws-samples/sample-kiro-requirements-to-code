@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Architecture Alignment Review",
+      "description": "Reviews newly created source and infrastructure files against TaskFlow conventions.",
+      "trigger": "PostFileCreate",
+      "matcher": "^(src|infra)/",
+      "action": {
+        "type": "agent",
+        "prompt": "A new file was created under src/ or infra/. Review it against .kiro/steering/coding-standards.md and infra-guidelines.md:\n\n1. Correct directory for its layer (api / domain / infrastructure)?\n2. snake_case Python modules, kebab-case Terraform module directories?\n3. Type hints on every function signature, no bare except?\n4. Terraform: name_prefix used, required tags applied, variables typed and described, module has main.tf / variables.tf / outputs.tf / versions.tf?\n5. Tenant-scoped data access goes through the tenant context dependency, never a raw unscoped query?\n\nReport only violations, one line each. If aligned, say 'Aligned' and stop."
+      }
+    }
+  ]
+}

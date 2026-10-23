@@ -1,0 +1,98 @@
+[project]
+name = "streamprocess"
+version = "0.1.0"
+description = "StreamProcess — serverless event ingestion and processing pipeline"
+requires-python = ">=3.12"
+# Lambda runtime dependencies are pinned per function in
+# src/functions/<name>/requirements.txt so deployment packages stay minimal.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "aws-lambda-powertools[tracer]==3.34.0",
+  "mypy==1.18.2",
+  "pydantic==2.13.4",
+  "pytest==8.4.2",
+  "ruff==0.14.2",
+  "uuid7==0.1.0",
+]
+
+# ---------------------------------------------------------------------------
+# Import roots
+#
+# Lambda puts the layer contents on sys.path via /opt/python, so the modules in
+# src/layers/common/python are imported as top-level modules (config, models,
+# responses). Functions are packages under src/functions, hence the configured
+# handler ingest.handler.handler. Both roots are declared below so ruff, mypy
+# and pytest resolve imports exactly the way the runtime does.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src/functions", "src/layers/common/python", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "ANN", # flake8-annotations — type hints are mandatory
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "D",   # pydocstyle
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "N",   # pep8-naming
+  "PT",  # flake8-pytest-style
+  "PTH", # flake8-use-pathlib
+  "RET", # flake8-return
+  "RUF", # ruff-specific
+  "S",   # flake8-bandit
+  "SIM", # flake8-simplify
+  "UP",  # pyupgrade
+  "W",   # pycodestyle warnings
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+  "S101", # asserts are the point of a test
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = ["src/functions", "src/layers/common/python"]
+explicit_package_bases = true
+namespace_packages = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+# The layer's __init__.py exists for local tooling only: at runtime the layer
+# directory is a sys.path root (/opt/python), not a package.
+exclude = ["^src/layers/common/python/__init__\\.py$"]
+
+[[tool.mypy.overrides]]
+# uuid7 0.1.0 ships no type information.
+module = ["uuid_extensions.*"]
+ignore_missing_imports = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src/functions", "src/layers/common/python"]
+# importlib mode keeps the test packages from colliding with the src packages
+# of the same name (tests/functions/ingest vs src/functions/ingest).
+addopts = "-ra --strict-markers --strict-config --import-mode=importlib"

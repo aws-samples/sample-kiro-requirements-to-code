@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Terraform Validate",
+      "description": "Formats and validates Terraform after the agent edits a .tf file under infra/.",
+      "trigger": "PostFileSave",
+      "matcher": "^infra/.*\\.tf$",
+      "action": {
+        "type": "agent",
+        "prompt": "A Terraform file under infra/ was just modified. Run 'terraform fmt' on the file, then 'terraform validate' in the containing module directory. If validation fails, fix the errors and re-run. Report the outcome in one or two lines."
+      }
+    }
+  ]
+}
