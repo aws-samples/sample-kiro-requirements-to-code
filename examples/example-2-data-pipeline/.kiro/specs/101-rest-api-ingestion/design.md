@@ -16,6 +16,7 @@ PI 1 delivers synchronous event ingestion via API Gateway → Lambda → Kinesis
   - AppSync — GraphQL overhead unnecessary for simple event ingestion
 - **Consequences:** Cold starts possible (mitigated with provisioned concurrency in prod). Pay-per-request pricing ideal for variable traffic.
 - **Rollback path:** Move to HTTP API if cost becomes concern; move to ECS if sustained high throughput.
+- **Authentication note (DEV-002):** the method uses `authorization = "AWS_IAM"` (SigV4); the API key is metering only, not identity. See `docs/THREAT-MODEL.md` E2-T01/E2-T02.
 
 ### DEC-002 — Kinesis for Event Durability (not SQS)
 
@@ -42,7 +43,7 @@ PI 1 delivers synchronous event ingestion via API Gateway → Lambda → Kinesis
 
 ```mermaid
 flowchart TD
-    PUB[Event Publisher] -->|HTTPS + API Key| APIGW[API Gateway]
+    PUB[Event Publisher] -->|HTTPS + SigV4 + API Key| APIGW[API Gateway]
     APIGW -->|Lambda Proxy| INGEST[Ingestion Lambda]
 
     INGEST -->|Validate| SCHEMA[Schema Registry<br/>S3 + cache]

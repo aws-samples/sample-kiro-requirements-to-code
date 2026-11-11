@@ -80,3 +80,7 @@ As a platform engineer, I want a Terraform module for AWS Cognito so that the te
 - [x] 3.4 `checkov` — no high-severity findings
 - [x] 3.5 `terraform plan -var-file=environments/dev.tfvars` — shows expected Cognito resources
 - [x] 3.6 Manual review: verify custom attributes are immutable/mutable as specified
+
+### Follow-ups
+
+- [ ] F1 Hardening (threat model E1-T16/E1-T17, DEV-002): `custom:role` removed from app client `write_attributes` and `allow_admin_create_user_only = true` applied in `main.tf`. Re-run 3.1-3.5 against the change and confirm A3 reads the role only from the server-managed claim.

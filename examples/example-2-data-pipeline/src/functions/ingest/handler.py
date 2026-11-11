@@ -3,6 +3,10 @@
 Story E1 of feature 101. The handler validates the request envelope, assigns a
 UUIDv7 correlation ID and returns ``202 Accepted``. Schema validation (E2) and
 Kinesis persistence (E3) plug into the same handler later.
+
+Until E3 lands the event is NOT persisted: ``202`` acknowledges receipt and
+validation only, and the payload is dropped after logging. See the example
+README and ``docs/THREAT-MODEL.md`` (E2-T08) at the repo root.
 """
 
 from __future__ import annotations

@@ -9,6 +9,7 @@
 #
 
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
@@ -33,10 +34,66 @@ resource "aws_kms_key" "state" {
   enable_key_rotation     = true
   rotation_period_in_days = 365
   deletion_window_in_days = 30
+  policy                  = data.aws_iam_policy_document.kms_state.json
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-tfstate"
   })
+}
+
+# Explicit key policy (CKV2_AWS_64). Without one, AWS applies the default
+# policy, which is equivalent to the root statement below but implicit.
+data "aws_iam_policy_document" "kms_state" {
+  # Standard KMS root statement. It keeps IAM policies in this account able to
+  # administer the key (so it cannot become unmanageable) and grants nothing to
+  # any principal outside the account.
+  statement {
+    sid    = "EnableRootAccountAdministration"
+    effect = "Allow"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+
+    actions   = ["kms:*"]
+    resources = ["*"]
+  }
+
+  # S3 may use the key only on behalf of this account's state bucket.
+  # The bucket ARN is built from the name local, not aws_s3_bucket.state.arn,
+  # because the bucket's SSE config already depends on this key (cycle).
+  statement {
+    sid    = "AllowS3StateBucketUseOfTheKey"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey",
+    ]
+
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:s3:::${local.state_bucket_name}"]
+    }
+  }
 }
 
 resource "aws_kms_alias" "state" {

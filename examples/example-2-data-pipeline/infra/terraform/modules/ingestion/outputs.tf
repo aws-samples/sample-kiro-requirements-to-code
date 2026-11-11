@@ -18,8 +18,18 @@ output "events_endpoint_url" {
   value       = "${aws_api_gateway_stage.this.invoke_url}${aws_api_gateway_resource.events.path}"
 }
 
+output "publisher_invoke_policy_arn" {
+  description = "ARN of the IAM policy granting execute-api:Invoke on POST /events. Attach it to each publisher's role or user."
+  value       = aws_iam_policy.publisher_invoke.arn
+}
+
+output "api_access_log_group_name" {
+  description = "CloudWatch Logs group holding the API Gateway access logs."
+  value       = aws_cloudwatch_log_group.api_access.name
+}
+
 output "api_key_id" {
-  description = "Identifier of the publisher API key. The key value is intentionally not exposed as an output."
+  description = "Identifier of the publisher API key (metering only). The key value is intentionally not exposed as an output."
   value       = aws_api_gateway_api_key.publisher.id
 }
 

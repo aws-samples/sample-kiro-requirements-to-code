@@ -140,6 +140,31 @@ tests/                                 → unit tests
 Both examples demonstrate the same workflow with different architectures, showing the
 methodology is stack-agnostic.
 
+> **Example 1: `custom:role` and `custom:tenant_id` are not yet authorization inputs.**
+> The JWT middleware verifies the token and exposes these claims, but nothing enforces
+> them: RBAC is story A3 and tenant isolation is story A4, both unimplemented. Until
+> those land, no code may make an access decision on `role` or `tenant_id`. The Cognito
+> module already prevents users from writing `custom:role` themselves so that A3 can
+> trust the claim when it arrives.
+
+> **No CI runs in this repository.** The workflows under `examples/*/.github/workflows/`
+> and `templates/workflows/` are templates for adopters to copy; GitHub does not execute
+> workflows nested below the repository root. The examples' tests, ruff, mypy,
+> `terraform validate`, tflint and checkov are therefore not run here. Run them locally
+> as described in each example's README before relying on the code.
+
+> **Disclaimer.** This is sample code, for non-production usage. You should work with
+> your security and legal teams to meet your organizational security, regulatory, and
+> compliance requirements before deployment.
+
+> **The example code and Terraform are illustrative only.** The `infra/` directories
+> exist to show how Kiro spec-driven development applies to an IaC codebase in an
+> engagement: how a requirement becomes a story, a design decision, a Terraform module,
+> and a validation task. They are not hardened, complete, or reviewed for deployment.
+> Do not `terraform apply` them against a real account or reuse them as production
+> infrastructure. The same applies to the application code under `src/`. For a
+> catalogue of the known gaps, see [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
+
 ### 3. Copy Templates for Your Own Project
 
 ```bash

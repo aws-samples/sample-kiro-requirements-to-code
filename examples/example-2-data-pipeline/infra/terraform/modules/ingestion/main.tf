@@ -5,6 +5,10 @@ locals {
   dlq_name      = "${var.name_prefix}-ingest-dlq"
 }
 
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 # ---------------------------------------------------------------------------
 # Packaging
 #
@@ -195,13 +199,37 @@ resource "aws_api_gateway_resource" "events" {
 }
 
 resource "aws_api_gateway_method" "post_events" {
-  rest_api_id   = aws_api_gateway_rest_api.this.id
-  resource_id   = aws_api_gateway_resource.events.id
-  http_method   = "POST"
-  authorization = "NONE"
-  # API key authentication: requests without x-api-key get 403 before the
-  # function is invoked.
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  resource_id = aws_api_gateway_resource.events.id
+  http_method = "POST"
+  # IAM/SigV4 is the authentication boundary: API Gateway rejects unsigned or
+  # unauthorized requests with 403 before the function is invoked, and the
+  # caller identity ($context.identity.caller / .user) lands in the access log.
+  # The API key is NOT identity. It is kept only so the usage plan can throttle
+  # and meter per publisher (THREAT-MODEL.md E2-T01 / E2-T02).
+  authorization    = "AWS_IAM"
   api_key_required = true
+}
+
+# Grants execute-api:Invoke on exactly POST /events of this stage. Attach it to
+# each publisher's IAM role or user; this module deliberately creates no
+# principals of its own.
+data "aws_iam_policy_document" "publisher_invoke" {
+  statement {
+    sid     = "InvokePostEvents"
+    effect  = "Allow"
+    actions = ["execute-api:Invoke"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:execute-api:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${aws_api_gateway_rest_api.this.id}/${var.api_stage_name}/${aws_api_gateway_method.post_events.http_method}${aws_api_gateway_resource.events.path}",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "publisher_invoke" {
+  name        = "${var.name_prefix}-publisher-invoke"
+  description = "Allows SigV4-signed POST /events calls to the StreamProcess ingestion API."
+  policy      = data.aws_iam_policy_document.publisher_invoke.json
+  tags        = var.tags
 }
 
 resource "aws_api_gateway_integration" "lambda" {
@@ -229,6 +257,15 @@ resource "aws_api_gateway_deployment" "this" {
   }
 }
 
+# Access log per request. Identity fields are the IAM caller and the API key
+# ID, never the key value, and the body and headers are not logged.
+resource "aws_cloudwatch_log_group" "api_access" {
+  name              = "/aws/apigateway/${var.name_prefix}-access"
+  retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
+  tags              = var.tags
+}
+
 resource "aws_api_gateway_stage" "this" {
   rest_api_id   = aws_api_gateway_rest_api.this.id
   deployment_id = aws_api_gateway_deployment.this.id
@@ -237,6 +274,28 @@ resource "aws_api_gateway_stage" "this" {
   tags          = var.tags
 
   xray_tracing_enabled = true
+
+  # Requires aws_api_gateway_account.cloudwatch_role_arn to be set once per
+  # account and region. That singleton is not owned by this module; see
+  # README.md "Prerequisites".
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access.arn
+    format = jsonencode({
+      requestId               = "$context.requestId"
+      ip                      = "$context.identity.sourceIp"
+      caller                  = "$context.identity.caller"
+      user                    = "$context.identity.user"
+      userArn                 = "$context.identity.userArn"
+      requestTime             = "$context.requestTime"
+      httpMethod              = "$context.httpMethod"
+      resourcePath            = "$context.resourcePath"
+      status                  = "$context.status"
+      protocol                = "$context.protocol"
+      responseLength          = "$context.responseLength"
+      apiKeyId                = "$context.identity.apiKeyId"
+      integrationErrorMessage = "$context.integrationErrorMessage"
+    })
+  }
 }
 
 resource "aws_api_gateway_method_settings" "this" {
@@ -249,8 +308,9 @@ resource "aws_api_gateway_method_settings" "this" {
     data_trace_enabled     = false
     throttling_rate_limit  = var.api_throttle_rate_limit
     throttling_burst_limit = var.api_throttle_burst_limit
-    # Execution and access logging need an account-level API Gateway CloudWatch
-    # role, which is not owned by this module. See README.md.
+    # Execution logging stays OFF; access logging is configured on the stage
+    # instead. Both need the account-level API Gateway CloudWatch role, which
+    # is not owned by this module. See README.md.
     logging_level = "OFF"
   }
 }
@@ -261,7 +321,7 @@ resource "aws_api_gateway_method_settings" "this" {
 
 resource "aws_api_gateway_api_key" "publisher" {
   name        = "${var.name_prefix}-publisher"
-  description = "API key issued to event publishers. Rotated quarterly."
+  description = "Metering key for the usage plan. Not an authentication credential: requests must also be SigV4-signed."
   enabled     = true
   tags        = var.tags
 }

@@ -46,7 +46,7 @@ Add your tracker's MCP server to `.kiro/settings/mcp.json`:
   "mcpServers": {
     "azureDevOps": {
       "command": "npx",
-      "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+      "args": ["-y", "@tiberriver256/mcp-server-azure-devops@0.1.54"],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/YOUR-ORG",
         "AZURE_DEVOPS_AUTH_METHOD": "pat",
@@ -65,7 +65,7 @@ Add your tracker's MCP server to `.kiro/settings/mcp.json`:
   "mcpServers": {
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       },
@@ -79,6 +79,14 @@ Add your tracker's MCP server to `.kiro/settings/mcp.json`:
 > tracker without your confirmation — so `create_*` and `update_*` tools must stay out
 > of `autoApprove`. Auto-approving reads keeps drift checks fast; leaving writes on
 > manual approval is what makes the "show me the payload, then I approve" flow real.
+> "Read" is not the same as "harmless", though: a read tool backed by a PAT is still a
+> data-exfiltration path if the agent is prompt-injected, so auto-approve only the
+> narrow issue/work-item reads shown above and never `get_file_contents`.
+
+Both snippets pin an exact package version. Refresh pins deliberately (`npm view <pkg>
+version`, read the changelog, edit `mcp.json`) rather than reverting to `@latest`; see
+[06-getting-started.md](06-getting-started.md#pinned-server-versions) for the reasoning
+and for the deprecation status of `@modelcontextprotocol/server-github`.
 
 ### Step 2: Create Sync Playbook Steering File
 

@@ -10,7 +10,7 @@ Implements DEC-001 (Cognito as the identity provider) from
 
 | Resource | Notes |
 |----------|-------|
-| `aws_cognito_user_pool` | Email login, password policy, email account recovery, TOTP MFA available but optional |
+| `aws_cognito_user_pool` | Email login, password policy, email account recovery, TOTP MFA available but optional, admin-only user creation (no self-signup) |
 | `aws_cognito_user_pool_client` | Confidential client, code grant only, token revocation, `prevent_user_existence_errors` on |
 | `aws_cognito_user_pool_domain` | Hosted UI at `<name_prefix>-auth` |
 
@@ -19,11 +19,16 @@ Implements DEC-001 (Cognito as the identity provider) from
 | Attribute | Type | Mutable | Why |
 |-----------|------|---------|-----|
 | `custom:tenant_id` | String (1-64) | No | Tenant binding. Immutability is the boundary tenant isolation (A4) trusts — moving a user between tenants requires re-provisioning. |
-| `custom:role` | String (1-32) | Yes | Application role read by the RBAC dependency (A3). Tenant admins can promote or demote users in place. |
+| `custom:role` | String (1-32) | Yes | Application role read by the RBAC dependency (A3). Tenant admins can promote or demote users in place through a backend admin path. |
 
-Because `custom:tenant_id` is immutable it is **not** in the client's
-`write_attributes`. Set it once at provisioning time with the Cognito Admin API
-(`AdminCreateUser` / `AdminUpdateUserAttributes`).
+Neither custom attribute is in the client's `write_attributes`; only `email`
+is. `custom:tenant_id` is immutable and set once at provisioning time with the
+Cognito Admin API (`AdminCreateUser` / `AdminUpdateUserAttributes`).
+`custom:role` is mutable but server-managed (`AdminUpdateUserAttributes` or
+Cognito groups): RBAC trusts the claim, so a user must never be able to write it.
+
+Self-signup is disabled (`allow_admin_create_user_only = true`). Users are
+created by an admin or provisioning automation until an invitation flow exists.
 
 Custom attributes cannot be renamed, retyped, or removed after the pool exists.
 Changing either `schema` block replaces the user pool and every user in it.

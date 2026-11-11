@@ -27,9 +27,15 @@ deviations_from_design:
   - id: DEV-001
     topic: Runtime JOSE library
     design_says: "No library named; story A2 planned python-jose throughout (task 5.4)"
-    reality: "PyJWT (pyjwt[crypto] >=2.13) at runtime; python-jose kept dev-only to mint test tokens"
-    reason: "PyJWT 2.13 fixes CVE-2026-48526 (algorithm confusion on raw-JWK decode), is typed, and is actively maintained"
+    reality: "PyJWT (pyjwt[crypto] >=2.13) at runtime; test tokens minted as a hand-built JWS signed with cryptography (python-jose removed 2026-10-09)"
+    reason: "PyJWT 2.13 fixes CVE-2026-48526 (algorithm confusion on raw-JWK decode), is typed, and is actively maintained. python-jose dropped entirely: PYSEC-2026-4298 (upstream #414, incomplete fix for CVE-2024-33663) has no fixed release"
     captured_in: docs/decisions/0001-jwt-library-choice.md
+  - id: DEV-002
+    topic: Cognito user creation and role attribute
+    design_says: "Design and story A1 implied self-signup (allow_admin_create_user_only = false) and a user-writable custom:role in the app client write_attributes"
+    reality: "Admin-only user creation (allow_admin_create_user_only = true); custom:role is read-only for the client and set server-side via AdminUpdateUserAttributes or Cognito groups"
+    reason: "Prevents any user from self-assigning custom:role = admin before RBAC (A3) lands and starts trusting the claim"
+    captured_in: docs/THREAT-MODEL.md (repo root) E1-T16 / E1-T17
 
 deferred_to_next_pi:
   - Social login (Google, GitHub)

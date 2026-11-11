@@ -107,16 +107,19 @@ def test_accepted_event_emits_business_metrics(
     assert {handler_module.METRIC_EVENTS_RECEIVED, handler_module.METRIC_EVENTS_INGESTED} <= published
 
 
-def test_request_without_api_key_is_rejected_upstream(
+def test_handler_does_not_enforce_authentication(
     api_gateway_event: EventFactory,
     lambda_context: FakeLambdaContext,
 ) -> None:
-    """API Gateway owns API key auth, so the handler holds no auth logic.
+    """The handler holds no auth logic; it trusts that API Gateway already enforced it.
 
-    The `/events` method sets `api_key_required = true`, which means a request
-    without `x-api-key` is answered with 403 before the function is invoked.
-    A request that does reach the handler is therefore already authenticated and
-    is processed normally.
+    This test does NOT verify that unauthenticated requests are rejected. That
+    enforcement lives in Terraform: the `/events` method uses
+    `authorization = "AWS_IAM"` (SigV4) and `api_key_required = true`, so an
+    unsigned request or one without `x-api-key` gets 403 before the function is
+    invoked. What this test pins down is the handler's contract: an event that
+    reaches it is processed normally regardless of the key header, and the key
+    is never echoed back in the response.
     """
     response = _invoke(api_gateway_event(api_key=None), lambda_context)
 

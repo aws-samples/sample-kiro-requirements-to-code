@@ -61,7 +61,7 @@ variable "log_level" {
 
 variable "log_retention_days" {
   type        = number
-  description = "CloudWatch Logs retention in days for the function log group."
+  description = "CloudWatch Logs retention in days for the function log group and the API Gateway access log group."
   default     = 14
 }
 

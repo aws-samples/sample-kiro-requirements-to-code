@@ -13,7 +13,7 @@ backend with native locking (`use_lockfile = true`, see DEC-101 in
 
 | Resource | Purpose |
 |----------|---------|
-| `aws_kms_key` + alias | Customer-managed CMK, yearly rotation enabled |
+| `aws_kms_key` + alias | Customer-managed CMK, yearly rotation enabled, explicit key policy (account root admin + S3 service use scoped to this account and bucket) |
 | `aws_s3_bucket` | State bucket, `prevent_destroy` lifecycle guard |
 | `aws_s3_bucket_versioning` | Recover a corrupted or truncated state file |
 | `aws_s3_bucket_server_side_encryption_configuration` | SSE-KMS with the CMK above, bucket keys on |

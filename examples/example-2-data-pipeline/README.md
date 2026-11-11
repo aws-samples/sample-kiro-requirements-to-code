@@ -4,6 +4,15 @@
 
 StreamProcess is a serverless event-driven data processing platform built on AWS. This example demonstrates spec-driven development for a Lambda/Step Functions architecture — a different pattern from the container-based Example 1.
 
+> **The ingest handler does not persist events yet.** `POST /events` validates the
+> envelope, assigns a correlation ID, emits metrics and logs, and returns
+> `202 Accepted`. The event is then discarded: writing it to Kinesis is story E3,
+> which has acceptance criteria only and no implementation. A publisher that sees
+> `202` from this code has not had its event stored. This is deliberate for a
+> reference example that shows the story sequence (E1 handler → E2 validation →
+> E3 persistence), but it means the current handler must not be used as a real
+> ingestion endpoint. See `docs/THREAT-MODEL.md` E2-T08 at the repo root.
+
 ## What's Demonstrated
 
 | Aspect | How It's Shown |

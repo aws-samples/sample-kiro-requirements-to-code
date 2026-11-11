@@ -111,21 +111,22 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
 
     steps:
-      # Pinned to released major tags. A full commit SHA (owner/action@<sha>)
-      # is stronger, since a major tag is mutable and can be repointed by the
-      # action owner. Pin SHAs if your organisation requires it.
+      # Every third-party action is pinned to a full commit SHA; the trailing
+      # comment is the release it resolves to. A tag is mutable and can be
+      # repointed by the action owner or an attacker; a SHA cannot. Refresh
+      # pins with Dependabot (package-ecosystem: github-actions) or pinact.
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       # Read-only role: this job runs without approval, so it must not hold
       # credentials that can change anything.
       - name: Configure AWS credentials (OIDC, no static keys)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -168,7 +169,7 @@ jobs:
       # delete these two steps and re-plan inside the gated apply job instead
       # (you trade reviewer visibility for confidentiality — decide knowingly).
       - name: Upload plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tfplan-${{ github.event.inputs.environment || 'dev' }}-${{ github.run_id }}
           path: |
@@ -200,21 +201,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Download plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tfplan-${{ needs.plan.outputs.target }}-${{ github.run_id }}
           path: ${{ env.TF_WORKING_DIR }}
 
       - name: Configure AWS credentials (OIDC, no static keys)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}

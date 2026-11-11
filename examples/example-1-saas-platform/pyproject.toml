@@ -8,7 +8,17 @@ requires-python = ">=3.12,<3.13"
 # Runtime dependencies. Bounded ranges: lower bound is the minimum version whose
 # API this code relies on, upper bound guards against breaking major releases.
 dependencies = [
-    "fastapi>=0.110,<0.120",
+    "fastapi>=0.140,<0.163",
+    # Pulled in transitively by fastapi, declared explicitly because FastAPI's own
+    # floor is only starlette>=0.46, which still admits vulnerable releases.
+    # The >=1.3.1 floor is a security floor, not an API floor: 1.1.0 fixes
+    # CVE-2026-48818 (GHSA-wqp7-x3pw-xc5r, StaticFiles resolves UNC paths on
+    # Windows -> SSRF / NTLMv2 credential leak) and 1.3.1 fixes CVE-2026-54283
+    # (GHSA-82w8-qh3p-5jfq, request.form() max_fields/max_part_size ignored for
+    # urlencoded bodies). This project calls neither StaticFiles nor
+    # request.form(), so the floor exists so resolvers pick a patched version.
+    # Do not lower it.
+    "starlette>=1.3.1,<2.0",
     "pydantic>=2.6,<3.0",
     "pydantic-settings>=2.2,<3.0",
     # JOSE implementation (docs/decisions/0001-jwt-library-choice.md, DEV-001).
@@ -26,13 +36,17 @@ dev = [
     "pytest-asyncio>=0.24,<1.3",
     "ruff>=0.6,<1.0",
     "mypy>=1.11,<2.0",
-    # Test-only JOSE implementation: fixtures mint tokens with python-jose so the
-    # suite exercises PyJWT against tokens it did not produce itself
+    # Imported directly by tests/unit/auth/conftest.py for RSA key generation and
+    # to sign test JWTs as a hand-built JWS, independently of PyJWT, so the suite
+    # exercises PyJWT against tokens it did not produce itself
     # (docs/decisions/0001-jwt-library-choice.md, story A2 task 5.4).
-    "python-jose[cryptography]>=3.4,<4.0",
-    # Imported directly by tests/unit/auth/conftest.py for RSA key generation.
     # Runtime code gets it transitively via pyjwt[crypto]; tests declare it.
-    "cryptography>=43,<50",
+    # The >=50 floor is a security floor, not an API floor: 50.0.0 fixes
+    # CVE-2026-69247 (GHSA-g6cj-pr64-35w5), a Bleichenbacher oracle in the PKCS#7
+    # EnvelopedData decrypt functions. This project never calls any PKCS7 API, so
+    # the floor exists so dependency scanners resolve a patched version. Do not
+    # lower it.
+    "cryptography>=50,<51",
 ]
 
 [build-system]

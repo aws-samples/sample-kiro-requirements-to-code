@@ -8,8 +8,13 @@ output "api_id" {
   value       = module.ingestion.api_id
 }
 
+output "publisher_invoke_policy_arn" {
+  description = "IAM policy granting execute-api:Invoke on POST /events. Attach it to each publisher's role or user."
+  value       = module.ingestion.publisher_invoke_policy_arn
+}
+
 output "api_key_id" {
-  description = "Identifier of the publisher API key. Read the key value with the AWS CLI or console; it is never emitted as an output."
+  description = "Identifier of the publisher API key (metering only). Read the key value with the AWS CLI or console; it is never emitted as an output."
   value       = module.ingestion.api_key_id
 }
 

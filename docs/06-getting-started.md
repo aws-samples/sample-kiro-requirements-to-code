@@ -143,7 +143,7 @@ Spec-driven development works without any MCP servers. You just won't have bidir
   "mcpServers": {
     "azureDevOps": {
       "command": "npx",
-      "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+      "args": ["-y", "@tiberriver256/mcp-server-azure-devops@0.1.54"],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/YOUR-ORG",
         "AZURE_DEVOPS_AUTH_METHOD": "pat",
@@ -167,7 +167,7 @@ sync principles in [05-work-item-sync-guide.md](05-work-item-sync-guide.md).
   "mcpServers": {
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "args": ["-y", "@modelcontextprotocol/server-github@2025.4.8"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       },
@@ -186,13 +186,37 @@ As with Azure DevOps, keep `create_issue` and `update_issue` out of `autoApprove
   "mcpServers": {
     "aws-docs": {
       "command": "uvx",
-      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "args": ["awslabs.aws-documentation-mcp-server@1.2.5"],
       "env": { "FASTMCP_LOG_LEVEL": "ERROR" },
       "autoApprove": ["search_documentation", "read_documentation"]
     }
   }
 }
 ```
+
+### Pinned server versions
+
+Every snippet above names an exact package version (`pkg@x.y.z`) rather than
+`@latest` or a bare package name. An MCP server runs on your machine with your
+credentials, and `npx -y pkg` / `uvx pkg@latest` installs whatever the registry
+serves at the moment Kiro starts it, so an unpinned entry turns a compromised
+or typosquatted release into code execution on the next launch. To refresh a
+pin, look up the current version (`npm view <pkg> version`, or the PyPI project
+page for `uvx` packages), read the changelog, and update the string in
+`mcp.json`; the `-y` flag only suppresses the npx install prompt and is safe to
+keep.
+
+Two notes on the specific packages:
+
+- `@modelcontextprotocol/server-github` is archived upstream and marked
+  deprecated on npm ("no security guarantees"); the maintained successor is
+  the Go-based [`github/github-mcp-server`](https://github.com/github/github-mcp-server).
+  The snippets keep the npm package because its tool names match the rest of
+  these docs; plan a migration before relying on it.
+- Do not add `get_file_contents` to the GitHub server's `autoApprove`. It
+  returns any file from any repository the token can see, so a prompt-injected
+  agent could read source and secrets without a confirmation prompt. Keep
+  auto-approval to the issue and PR listing tools shown.
 
 ---
 

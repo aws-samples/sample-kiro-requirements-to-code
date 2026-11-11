@@ -88,7 +88,7 @@ As a backend developer, I want a reusable JWT validation middleware so that ever
 - [x] 5.1 Unit tests for JWKS cache (mock HTTP, verify TTL behavior)
 - [x] 5.2 Unit tests for token validation (valid token, expired, bad signature, missing claims)
 - [x] 5.3 Unit tests for FastAPI dependency (mock validate_token, verify response codes)
-- [x] 5.4 Create test fixtures: generate RS256 key pair, mint test JWTs with `python-jose`
+- [x] 5.4 Create test fixtures: generate RS256 key pair, mint test JWTs as a hand-built JWS signed with `cryptography` (independent of PyJWT)
 
 ### Task 6: Validation
 

@@ -44,8 +44,11 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
+  # Self-signup is disabled until an invitation / tenant-provisioning flow
+  # exists. Users are created by an admin or automation (AdminCreateUser), which
+  # is also the only path that can set custom:tenant_id.
   admin_create_user_config {
-    allow_admin_create_user_only = false
+    allow_admin_create_user_only = true
   }
 
   # TOTP registered so MFA can be turned on per user without replacing the pool.
@@ -143,9 +146,13 @@ resource "aws_cognito_user_pool_client" "app" {
 
   # custom:tenant_id is immutable and therefore cannot be a write attribute.
   # It is set once at provisioning time through the Cognito Admin API.
+  #
+  # custom:role is deliberately absent. It is set only server-side (via
+  # AdminUpdateUserAttributes from a backend admin path, or Cognito groups) and
+  # must never be user-writable: RBAC (story A3) will trust this claim, so a
+  # user who could write it could make themselves admin.
   write_attributes = [
     "email",
-    "custom:role",
   ]
 }
 

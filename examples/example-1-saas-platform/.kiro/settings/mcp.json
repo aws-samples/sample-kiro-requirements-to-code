@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@tiberriver256/mcp-server-azure-devops"
+        "@tiberriver256/mcp-server-azure-devops@0.1.54"
       ],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/YOUR-ORG",
@@ -24,7 +24,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-github"
+        "@modelcontextprotocol/server-github@2025.4.8"
       ],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
@@ -34,14 +34,13 @@
         "get_issue",
         "list_issues",
         "get_pull_request",
-        "list_pull_requests",
-        "get_file_contents"
+        "list_pull_requests"
       ]
     },
     "aws-docs": {
       "command": "uvx",
       "args": [
-        "awslabs.aws-documentation-mcp-server@latest"
+        "awslabs.aws-documentation-mcp-server@1.2.5"
       ],
       "env": {
         "FASTMCP_LOG_LEVEL": "ERROR"

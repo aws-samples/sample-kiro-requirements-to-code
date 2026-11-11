@@ -158,13 +158,56 @@ the workflow file can bypass it.
 A role ARN is not really a secret, and repository variables work equally well;
 storing it as a secret just keeps the account ID out of public run logs.
 
+## Action pinning
+
+Every `uses:` in these templates names a 40-character commit SHA, with the
+release it resolves to as a trailing comment:
+
+```yaml
+- uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+```
+
+**Why.** A tag such as `v5` is a mutable pointer. Anyone who compromises the
+action's repository or a maintainer account can repoint it at new code, and
+every workflow that references `@v5` runs that code on its next trigger, with
+the workflow's token and any OIDC role it can assume. This is how the
+`tj-actions/changed-files` incident in March 2025 leaked CI secrets from
+thousands of repositories. A commit SHA is content-addressed and cannot be
+repointed; the worst an attacker can do is publish a new commit that nobody
+references.
+
+**Keeping pins fresh.** A SHA pin is only as good as the process that bumps
+it. Dependabot reads the `# vX.Y.Z` comment, opens a PR when a newer release
+exists, and rewrites both the SHA and the comment. Drop this into
+`.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+```
+
+Without Dependabot, `pinact run` (https://github.com/suzuki-shunsuke/pinact)
+or `ratchet upgrade .github/workflows/*.yml`
+(https://github.com/sethvargo/ratchet) rewrites the pins in place and is
+suitable for a pre-commit hook or a scheduled job. Either tool also converts
+any `@vN` reference a contributor adds back to a SHA.
+
+The pins in this repository were resolved on the date of the commit that
+introduced them; check the comment against the action's releases page before
+copying a template that has sat unmodified for a long time.
+
 ## Conventions used throughout
 
-**Actions are pinned to released major tags** (`actions/checkout@v5`), never
-`@main` or `@latest`, which would run whatever the action owner pushed this
-morning. A major tag is still mutable — the owner can repoint it — so teams
-under supply-chain review should pin the full 40-character commit SHA and let
-Dependabot bump it. Every template says so at its first `uses:`.
+**Actions are pinned to full commit SHAs** with the release as a trailing
+comment (`actions/checkout@fbc6f399…6c09 # v5.1.0`), never `@main`, `@latest`
+or a bare major tag. See [Action pinning](#action-pinning) below.
 
 **`permissions:` is declared in every workflow** and starts at
 `contents: read`. Scopes are added per job, only where used:

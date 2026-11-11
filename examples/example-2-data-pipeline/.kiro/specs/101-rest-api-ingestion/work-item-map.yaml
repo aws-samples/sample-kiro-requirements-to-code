@@ -29,6 +29,12 @@ deviations_from_design:
     reality: "JSON Schema files in S3 with in-memory caching for PI 1 (E2)"
     reason: "Registry adds discoverability we don't need yet; S3 keeps E2 at 4 PD. Migration deferred to PI 2"
     captured_in: .kiro/specs/101-rest-api-ingestion/design.md#open-questions--risks
+  - id: DEV-002
+    topic: Ingestion API authentication
+    design_says: "API Gateway REST API with API key authentication (requirements.md R1, design.md component diagram)"
+    reality: "POST /events uses authorization = AWS_IAM (SigV4) with an exported execute-api:Invoke policy; the API key remains for metering only; stage access logging enabled (infra/terraform/modules/ingestion/main.tf)"
+    reason: "API keys are a static shared bearer secret with no caller identity, rotation or attribution; threat model E2-T01 (H) and E2-T02 (M)"
+    captured_in: docs/THREAT-MODEL.md#E2-T01
 
 deferred_to_next_pi:
   - Kinesis consumer-based ingestion (high-throughput path)

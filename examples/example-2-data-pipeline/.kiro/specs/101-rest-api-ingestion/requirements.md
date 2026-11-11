@@ -10,6 +10,7 @@ Implement the synchronous REST API ingestion endpoint that allows event publishe
 ## In Scope (PI 1)
 
 - API Gateway REST API with API key authentication
+  - Note (DEV-002): authentication is IAM/SigV4 (`authorization = "AWS_IAM"`); the API key is kept for metering and throttling only. See `docs/THREAT-MODEL.md` E2-T01/E2-T02.
 - Lambda ingestion handler (validate, acknowledge, route)
 - JSON Schema validation against registered schemas
 - Dead-letter queue for invalid events (with metadata: source, schema, error)
